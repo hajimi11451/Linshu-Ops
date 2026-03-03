@@ -140,7 +140,7 @@ public class DiagnosisController {
     @PostMapping("/ai/chat")
     public ResponseEntity<?> chat(@RequestBody Map<String, String> request) {
         String query = request.get("query");
-        String answer = aiUtils.chatWithRag(query);
+        String answer = aiUtils.chatWithOpsAssistant(query);
 
         Map<String, Object> response = new HashMap<>();
         response.put("code", 200);

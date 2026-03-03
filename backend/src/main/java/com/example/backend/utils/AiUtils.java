@@ -1,16 +1,19 @@
-package com.example.backend.utils;
+﻿package com.example.backend.utils;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Component;
-import org.springframework.util.StringUtils;
-import org.springframework.web.client.RestTemplate;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
+import org.springframework.web.client.RestTemplate;
+import org.springframework.web.client.HttpClientErrorException;
+import jakarta.annotation.PostConstruct;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -22,11 +25,9 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
-/**
- * AI 工具类
- * 用于与千帆 ModelBuilder (OpenAI 兼容接口) 交互，实现 RAG (Retrieval-Augmented Generation) + API 的功能。
- */
 @Slf4j
 @Component
 public class AiUtils {
@@ -37,184 +38,314 @@ public class AiUtils {
     @Value("${qianfan.v2.token}")
     private String token;
 
-    @Value("${qianfan.v2.model-name}")
-    private String modelName;
+    @Value("${qianfan.v2.audit-model-name:glm-4.7}")
+    private String auditModelName;
 
-    // RAG 使用的知识库文件路径 (硬编码)
+    @Value("${qianfan.v2.chat-model-name:glm-4.7}")
+    private String chatModelName;
+
+    @Value("${qianfan.v2.read-timeout-seconds:40}")
+    private int readTimeoutSeconds;
+
     private static final String RAG_FILE_PATH = "d:\\WorkSpace\\JavaWorkSpace\\aiOps\\backend\\src\\main\\resources\\info.md";
 
-    private final RestTemplate restTemplate = new RestTemplate();
+    private RestTemplate restTemplate;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    /**
-     * 分析日志内容
-     *
-     * @param logContent 日志内容
-     * @return 分析结果 (JSON 字符串或 "无问题")
-     */
-    public String analyzeLog(String logContent) {
-        // 1. 读取 RAG 文件内容
-        String ragContext = readRagFile();
+    @PostConstruct
+    public void initRestTemplate() {
+        this.restTemplate = buildRestTemplate();
+        log.info("AI HTTP client initialized, readTimeoutSeconds={}", readTimeoutSeconds);
+    }
 
-        // 2. 构建 System Prompt
-        String systemPrompt = "你是一名智能运维专家。请根据提供的日志信息进行分析。\n";
-        
+    public String analyzeLog(String logContent) {
+        String ragContext = readRagFile();
+        String systemPrompt = "你是一名智能运维专家，请根据提供的日志信息进行分析。\n";
+
         if (StringUtils.hasText(ragContext)) {
             systemPrompt += "参考资料如下：\n" + ragContext + "\n\n";
         }
 
-        systemPrompt += "请严格遵守以下输出规则：\n" +
-                "1. 如果发现异常或错误，请返回一个标准的 JSON 对象，包含以下字段（除名称外均用中文）：\n" +
-                "   - component: 当前组件名称\n" +
-                "   - errorSummary: 问题摘要（一句话概括）\n" +
-                "   - analysisResult: 遇到的问题（仅描述现象与原因，不要写建议；可多条分点）\n" +
-                "   - suggestedActions: 建议处理方式（仅写解决步骤或建议，与 analysisResult 分开）\n" +
-                "   - riskLevel: 风险等级 (如：高、中、低、无)\n" +
-                "2. 如果日志无异常，上述字段中 errorSummary、analysisResult、suggestedActions 填\"无\"，riskLevel 填\"无\"。\n" +
-                "3. 直接返回 JSON，不要包含 Markdown 标记 (如 ```json)。";
+        systemPrompt += "请严格遵守以下输出规则：\n"
+                + "1. 如果发现异常或错误，返回标准 JSON 对象，字段包含 component,errorSummary,analysisResult,suggestedActions,riskLevel。\n"
+                + "2. 如果日志无异常，errorSummary/analysisResult/suggestedActions 填写\"无\"，riskLevel 填写\"无\"。\n"
+                + "3. 直接返回 JSON，不要 Markdown。";
 
-        // 3. 调用 API
-        return callQianfanApi(systemPrompt, logContent);
+        return callQianfanApi(systemPrompt, logContent, auditModelName);
     }
 
-    /**
-     * 获取 RAG 增强后的回答
-     *
-     * @param userQuery 用户的问题
-     * @return AI 的回答
-     */
     public String chatWithRag(String userQuery) {
-        // 1. 读取 RAG 文件内容
         String ragContext = readRagFile();
-        
-        // 2. 构建 System Prompt (系统指令)
-        // 在这里修改 System 内容，定义 AI 的角色和行为
         String systemPrompt = "你是一个专业的 AI 助手。";
         if (StringUtils.hasText(ragContext)) {
-            systemPrompt += "\n以下是参考资料，请结合这些资料回答用户的问题，如果资料中没有相关信息，请根据你自己来思考有什么问题：\n" + ragContext;
+            systemPrompt += "\n以下是参考资料，请结合资料回答；如果资料无相关信息，可基于常识补充：\n" + ragContext;
         }
-
-        // 3. 调用千帆/OpenAI 兼容 API
-        return callQianfanApi(systemPrompt, userQuery);
+        return callQianfanApi(systemPrompt, userQuery, chatModelName);
     }
 
-    /**
-     * 让 AI 生成查找日志的 Linux 命令
-     * @param component 组件名称
-     * @param osType 操作系统类型
-     * @return Linux 命令字符串
-     */
+    public String chatWithOpsAssistant(String userQuery) {
+        String systemPrompt = "你是专业的运维聊天助手。优先给出可执行方案，并明确风险与回滚建议。";
+        return callQianfanApi(systemPrompt, userQuery, chatModelName);
+    }
+
+    public Map<String, Object> planServerCommandByGlm47(String userQuery) {
+        String systemPrompt = "你是 Linux 运维助手。请把用户需求拆解为可执行的计划步骤，并返回 JSON，不要输出 Markdown 和额外文本。"
+                + "顶层 JSON 字段固定为：reply,hasCommand,command,riskLevel,needConfirm,planSteps。"
+                + "其中 hasCommand 和 needConfirm 必须是布尔值；riskLevel 只能是 low/medium/high。"
+                + "planSteps 是数组，每项字段固定为：description,checkCommand,expectContains,onPass,onFail,executeCommand。"
+                + "onPass/onFail 只能是 continue|execute|stop。"
+                + "要求：优先使用“先检测后执行”的嵌套逻辑。"
+                + "例如创建文件前，应先检测目录是否存在、文件是否已存在，再决定是否创建。"
+                + "如果无需执行命令，hasCommand=false 且 command 为空字符串，planSteps 为空数组。";
+
+        String response = callQianfanApi(systemPrompt, userQuery, "glm-4.7");
+        Map<String, Object> parsed = parseCommandPlan(response);
+        if (Boolean.TRUE.equals(parsed.get("hasCommand")) || hasPlanSteps(parsed)) {
+            return parsed;
+        }
+
+        // AI 超时/断连/异常时本地兜底，不额外消耗 token
+        if (isAiUnavailableResponse(response)) {
+            log.warn("AI planning unavailable, fallback to local rule planner. query={}", userQuery);
+            return buildFallbackPlan(userQuery, response);
+        }
+        return parsed;
+    }
+
     public String generateLogCommand(String component, String osType) {
-        String systemPrompt = "你是一个 Linux 运维专家。根据组件名和操作系统，生成一条获取最近 50 行错误日志的命令。只返回命令字符串，不要Markdown，不要解释。优先使用标准路径。";
+        String systemPrompt = "你是 Linux 运维专家。根据组件名和操作系统，生成一条获取最近50行错误日志的命令。"
+                + "只返回命令字符串，不要 Markdown，不要解释。";
         String userPrompt = String.format("OS: %s, Component: %s", osType, component);
-        // 调用现有的 callQianfanApi 方法
-        String cmd = callQianfanApi(systemPrompt, userPrompt);
-        // 简单清洗，防止 AI 返回 ```bash
+        String cmd = callQianfanApi(systemPrompt, userPrompt, auditModelName);
         return cmd.replace("```bash", "").replace("```", "").trim();
     }
 
-    /**
-     * 读取 RAG 文件内容
-     *
-     * @return 文件内容字符串
-     */
     private String readRagFile() {
         try {
             Path path = Paths.get(RAG_FILE_PATH);
             if (Files.exists(path)) {
                 return Files.readString(path);
-            } else {
-                log.warn("RAG 文件不存在: {}", RAG_FILE_PATH);
-                return ""; // 或者抛出异常，视业务需求而定
             }
+            log.warn("RAG file does not exist: {}", RAG_FILE_PATH);
+            return "";
         } catch (IOException e) {
-            log.error("读取 RAG 文件失败", e);
+            log.error("Failed to read RAG file", e);
             return "";
         }
     }
 
-    /**
-     * 自动分析历史数据并提取知识到 RAG 文件
-     * @param dataList 格式化后的运维记录列表
-     */
     public void analyzeAndExtractKnowledge(List<String> dataList) {
         if (dataList == null || dataList.isEmpty()) {
-            log.info("没有可分析的历史运维数据。");
+            log.info("No history data for AI extraction.");
             return;
         }
 
-        // 1. 拼接数据
         StringBuilder sb = new StringBuilder("以下是最近7天的用户运维操作记录：\n");
         for (String record : dataList) {
             sb.append("- ").append(record).append("\n");
         }
 
-        // 2. 定义 Prompt，强制要求输出格式
-        String systemPrompt = "你是一个运维知识库构建专家。请分析数据，找出特定组件最常用的处理方式。\n" +
-                "输出规则：\n" +
-                "1. 格式严格为：针对组件：[组件名]；常规维护建议：用户高频选择执行 [处理方式] 操作。\n" +
-                "2. 过滤掉无意义的偶发操作。\n" +
-                "3. 如果无规律，直接回答“无”。\n" +
-                "4. 请直接返回结果，不要包含 Markdown 格式标记 (如 ```json ... ```)。";
+        String systemPrompt = "你是运维知识库构建专家。请分析数据，提取高频可复用处理方式。"
+                + "如果没有规律，直接回答“无”。";
 
-        // 3. 调用 AI
-        log.info("开始调用 AI 提取高频运维知识...");
-        String aiResponse = callQianfanApi(systemPrompt, sb.toString());
+        log.info("Start extracting operation knowledge by AI...");
+        String aiResponse = callQianfanApi(systemPrompt, sb.toString(), auditModelName);
 
-        // 4. 存入文件
         if (StringUtils.hasText(aiResponse) && !"无".equals(aiResponse.trim())) {
-            log.info("发现有价值的知识，正在追加到 RAG 文件...");
             appendKnowledgeToRagFile(aiResponse);
-        } else {
-            log.info("AI 未发现明显的高频运维规律。");
         }
     }
 
-    /**
-     * 将知识以追加模式写入 RAG 文件 (info.md)
-     * @param content 提取的知识内容
-     */
     private void appendKnowledgeToRagFile(String content) {
         try {
             Path path = Paths.get(RAG_FILE_PATH);
             String finalContent = "\n\n### 自动归档知识 (" + LocalDate.now() + ")\n" + content;
-            
-            // 确保目录存在
             Files.createDirectories(path.getParent());
-            
-            // 如果文件不存在则创建，存在则追加
-            Files.writeString(path, finalContent, 
-                StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-            
-            log.info("成功追加知识到文件: {}", RAG_FILE_PATH);
+            Files.writeString(path, finalContent, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+            log.info("Knowledge appended to {}", RAG_FILE_PATH);
         } catch (IOException e) {
-            log.error("追加知识到 RAG 文件失败", e);
+            log.error("Failed to append knowledge", e);
         }
     }
 
-    /**
-     * 调用千帆 (OpenAI 兼容) API
-     *
-     * @param systemPrompt 系统提示词 (System Role)
-     * @param userPrompt 用户提示词 (User Role)
-     * @return AI 回答内容
-     */
-    private String callQianfanApi(String systemPrompt, String userPrompt) {
+    private Map<String, Object> parseCommandPlan(String response) {
+        Map<String, Object> result = new HashMap<>();
+        result.put("reply", response);
+        result.put("hasCommand", false);
+        result.put("command", "");
+        result.put("riskLevel", "medium");
+        result.put("needConfirm", true);
+        result.put("planSteps", new ArrayList<>());
+
+        if (!StringUtils.hasText(response)) {
+            result.put("reply", "未获取到有效回答。");
+            return result;
+        }
+
         try {
-            // 构建完整的 API URL
+            JsonNode root = objectMapper.readTree(response.trim());
+            if (root.isObject()) {
+                result.put("reply", root.path("reply").asText(response));
+                result.put("hasCommand", root.path("hasCommand").asBoolean(false));
+                result.put("command", root.path("command").asText(""));
+                result.put("riskLevel", root.path("riskLevel").asText("medium"));
+                result.put("needConfirm", root.path("needConfirm").asBoolean(true));
+                result.put("planSteps", parsePlanSteps(root.path("planSteps")));
+            }
+        } catch (Exception ignored) {
+            // keep fallback shape
+        }
+        return result;
+    }
+
+    private List<Map<String, String>> parsePlanSteps(JsonNode planStepsNode) {
+        List<Map<String, String>> steps = new ArrayList<>();
+        if (!planStepsNode.isArray()) {
+            return steps;
+        }
+
+        for (JsonNode item : planStepsNode) {
+            if (!item.isObject()) {
+                continue;
+            }
+            Map<String, String> step = new HashMap<>();
+            step.put("description", item.path("description").asText(""));
+            step.put("checkCommand", item.path("checkCommand").asText(""));
+            step.put("expectContains", item.path("expectContains").asText("YES"));
+            step.put("onPass", normalizeAction(item.path("onPass").asText("continue")));
+            step.put("onFail", normalizeAction(item.path("onFail").asText("stop")));
+            step.put("executeCommand", item.path("executeCommand").asText(""));
+            steps.add(step);
+        }
+        return steps;
+    }
+
+    private String normalizeAction(String action) {
+        if (!StringUtils.hasText(action)) {
+            return "continue";
+        }
+        String normalized = action.trim().toLowerCase();
+        if ("execute".equals(normalized) || "stop".equals(normalized)) {
+            return normalized;
+        }
+        return "continue";
+    }
+
+    private boolean hasPlanSteps(Map<String, Object> plan) {
+        Object raw = plan.get("planSteps");
+        if (!(raw instanceof List<?> list)) {
+            return false;
+        }
+        return !list.isEmpty();
+    }
+
+    private boolean isAiUnavailableResponse(String response) {
+        if (!StringUtils.hasText(response)) {
+            return true;
+        }
+        String s = response.trim();
+        return s.contains("超时") || s.contains("连接中断") || s.contains("调用 AI 服务时发生异常");
+    }
+
+    private Map<String, Object> buildFallbackPlan(String query, String aiErrorText) {
+        Map<String, Object> result = new HashMap<>();
+        result.put("reply", "AI 规划不可用，已切换本地规则规划。");
+        result.put("hasCommand", true);
+        result.put("command", "");
+        result.put("riskLevel", "low");
+        result.put("needConfirm", true);
+
+        String folderName = extractFolderName(query);
+        String fileName = extractFileName(query);
+
+        if (!StringUtils.hasText(folderName)) {
+            folderName = "default_home_folder";
+        }
+        if (!StringUtils.hasText(fileName)) {
+            fileName = "new_file.txt";
+        } else if (!fileName.contains(".")) {
+            fileName = fileName + ".txt";
+        }
+
+        String folderPath = "/home/" + folderName;
+        String filePath = folderPath + "/" + fileName;
+
+        List<Map<String, String>> steps = new ArrayList<>();
+        steps.add(step(
+                "检查目标目录是否存在",
+                "test -d '" + folderPath + "' && echo YES || echo NO",
+                "YES",
+                "continue",
+                "stop",
+                ""
+        ));
+        steps.add(step(
+                "检查目标文件是否已存在",
+                "test -f '" + filePath + "' && echo YES || echo NO",
+                "YES",
+                "stop",
+                "execute",
+                "touch '" + filePath + "' && echo CREATED"
+        ));
+
+        result.put("planSteps", steps);
+        result.put("fallback", true);
+        result.put("fallbackReason", aiErrorText);
+        return result;
+    }
+
+    private Map<String, String> step(String description, String checkCommand, String expectContains,
+                                     String onPass, String onFail, String executeCommand) {
+        Map<String, String> step = new HashMap<>();
+        step.put("description", description);
+        step.put("checkCommand", checkCommand);
+        step.put("expectContains", expectContains);
+        step.put("onPass", onPass);
+        step.put("onFail", onFail);
+        step.put("executeCommand", executeCommand);
+        return step;
+    }
+
+    private String extractFolderName(String query) {
+        if (!StringUtils.hasText(query)) return "";
+        Pattern p = Pattern.compile("home目录(?:下|上)?(?:的)?([\\u4e00-\\u9fa5A-Za-z0-9_\\-]+?)文件夹");
+        Matcher m = p.matcher(query);
+        if (m.find()) {
+            return m.group(1).trim();
+        }
+        return "";
+    }
+
+    private String extractFileName(String query) {
+        if (!StringUtils.hasText(query)) return "";
+        Pattern named = Pattern.compile("(?:叫做|名叫)([\\u4e00-\\u9fa5A-Za-z0-9_\\-.]+)");
+        Matcher m1 = named.matcher(query);
+        if (m1.find()) {
+            return m1.group(1).trim();
+        }
+        Pattern create = Pattern.compile("创建([\\u4e00-\\u9fa5A-Za-z0-9_\\-.]+?)(?:文件|txt|文本)");
+        Matcher m2 = create.matcher(query);
+        if (m2.find()) {
+            return m2.group(1).trim();
+        }
+        return "";
+    }
+
+    private String callQianfanApi(String systemPrompt, String userPrompt, String targetModel) {
+        long start = System.currentTimeMillis();
+        try {
             String url = baseUrl;
             if (!url.endsWith("/")) {
                 url += "/";
             }
             url += "chat/completions";
+            log.info("AI request start, model={}, url={}", targetModel, url);
 
-            // 构建请求体 (OpenAI 格式)
             Map<String, Object> requestBody = new HashMap<>();
-            requestBody.put("model", modelName);
-            
+            requestBody.put("model", targetModel);
+
             List<Map<String, String>> messages = new ArrayList<>();
-            
-            // 添加 System 消息 (设置 AI 行为)
+
             if (StringUtils.hasText(systemPrompt)) {
                 Map<String, String> systemMsg = new HashMap<>();
                 systemMsg.put("role", "system");
@@ -222,42 +353,51 @@ public class AiUtils {
                 messages.add(systemMsg);
             }
 
-            // 添加 User 消息 (用户问题)
             Map<String, String> userMsg = new HashMap<>();
             userMsg.put("role", "user");
-            userMsg.put("content", userPrompt);
+            userMsg.put("content", userPrompt == null ? "" : userPrompt);
             messages.add(userMsg);
-            
+
             requestBody.put("messages", messages);
-            
-            // 可以添加其他参数，如 temperature, top_p 等
-            // requestBody.put("temperature", 0.7);
 
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
             headers.set("Authorization", "Bearer " + token);
 
             HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
-
             ResponseEntity<String> response = restTemplate.postForEntity(url, entity, String.class);
 
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                 JsonNode root = objectMapper.readTree(response.getBody());
-                // OpenAI 格式响应解析
                 if (root.has("choices") && root.get("choices").isArray() && root.get("choices").size() > 0) {
                     JsonNode choice = root.get("choices").get(0);
                     if (choice.has("message") && choice.get("message").has("content")) {
-                         return choice.get("message").get("content").asText();
+                        log.info("AI request success, model={}, elapsedMs={}", targetModel, System.currentTimeMillis() - start);
+                        return choice.get("message").get("content").asText();
                     }
                 } else if (root.has("error")) {
-                     log.error("API 调用返回错误: {}", root.get("error").toString());
-                     return "AI 服务暂时不可用: " + root.get("error").toString();
+                    log.error("AI request failed, model={}, elapsedMs={}, error={}",
+                            targetModel, System.currentTimeMillis() - start, root.get("error"));
+                    log.error("AI API error: {}", root.get("error"));
+                    return "AI 服务暂时不可用: " + root.get("error");
                 }
             }
-        } catch (Exception e) {
-            log.error("调用 AI API 异常", e);
+        } catch (HttpClientErrorException e) {
+            log.error("AI request http error, model={}, status={}, elapsedMs={}, body={}",
+                    targetModel, e.getStatusCode(), System.currentTimeMillis() - start, e.getResponseBodyAsString(), e);
             return "调用 AI 服务时发生异常。";
+        } catch (Exception e) {
+            log.error("Call AI API exception, model={}, elapsedMs={}", targetModel, System.currentTimeMillis() - start, e);
+            return "AI 服务连接中断或超时，请稍后重试。";
         }
+        log.warn("AI request finished without valid content, model={}, elapsedMs={}", targetModel, System.currentTimeMillis() - start);
         return "未能获取有效回答。";
+    }
+
+    private RestTemplate buildRestTemplate() {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(10000);
+        factory.setReadTimeout(Math.max(readTimeoutSeconds, 1) * 1000);
+        return new RestTemplate(factory);
     }
 }

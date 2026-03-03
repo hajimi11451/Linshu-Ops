@@ -1,10 +1,11 @@
-import { createRouter, createWebHashHistory } from 'vue-router'
+﻿import { createRouter, createWebHashHistory } from 'vue-router'
 import Login from '../views/Login.vue'
 import Register from '../views/Register.vue'
 import MainLayout from '../layouts/MainLayout.vue'
 import Dashboard from '../views/Dashboard.vue'
 import DiagnosisView from '../views/DiagnosisView.vue'
 import InfoListView from '../views/InfoListView.vue'
+import OpsAssistantView from '../views/OpsAssistantView.vue'
 
 const router = createRouter({
   history: createWebHashHistory(import.meta.env.BASE_URL),
@@ -40,7 +41,15 @@ const router = createRouter({
           name: 'diagnosis',
           component: DiagnosisView,
           meta: {
-            title: '监控配置',
+            title: '智能诊断配置',
+          },
+        },
+        {
+          path: '/ops-assistant',
+          name: 'ops-assistant',
+          component: OpsAssistantView,
+          meta: {
+            title: '灵枢助手',
           },
         },
         {

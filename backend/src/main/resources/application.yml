@@ -17,9 +17,17 @@ mybatis-plus:
 
 qianfan:
   v2:
+    # 千帆 OpenAI 兼容接口地址（固定到 v2）
     base-url: https://qianfan.baidubce.com/v2
-    token: bce-v3/ALTAK-kmup5yMEjURtkjmQI9Dg3/bb0fa101e24e9d654618ee21038db771bd86c00b
-    model-name: glm-4.7
+    # 鉴权 Token（401 通常是这个值无效、过期或与当前服务不匹配）
+    # 从环境变量读取，避免明文泄露：QIANFAN_V2_TOKEN
+    token: ${QIANFAN_V2_TOKEN:}
+    # 日志审核/日志分析使用的模型
+    audit-model-name: glm-4.7
+    # 聊天助手（含命令规划）使用的模型
+    chat-model-name: glm-4.7
+    # AI 接口读取超时时间（单位：秒）
+    read-timeout-seconds: 120
 
 monitor:
   schedule:

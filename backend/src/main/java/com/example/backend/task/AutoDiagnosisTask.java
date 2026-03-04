@@ -27,7 +27,8 @@ public class AutoDiagnosisTask {
     public void runAutoDiagnosis() {
         log.info("开始执行自动诊断任务...");
         
-        List<ComponentConfig> configs = diagnosisService.listConfigs(null);
+        List<ComponentConfig> configs = diagnosisService.listAllConfigsForAutoTask();
+        log.info("自动诊断扫描到配置数量: {}", configs.size());
         if (configs == null || configs.isEmpty()) {
             log.info("当前没有监控配置，跳过自动诊断。");
             return;

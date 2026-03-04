@@ -310,6 +310,10 @@ public class DiagnosisService {
                 .eq(ComponentConfig::getUserId, userId));
     }
 
+    public List<ComponentConfig> listAllConfigsForAutoTask() {
+        return componentConfigMapper.selectList(new LambdaQueryWrapper<>());
+    }
+
     public void deleteConfig(Long id, String appUsername) {
         Long userId = resolveUserIdFromAppUsername(appUsername);
         if (userId == null) {

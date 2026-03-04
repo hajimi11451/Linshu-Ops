@@ -1,100 +1,144 @@
-# AI Ops Platform
+﻿# AIOps Platform
 
-AI Ops Platform 是一个集成了服务器监控、AI 辅助运维功能的现代化运维管理平台。
+一个前后端分离的智能运维平台，支持服务器监控、自动诊断、AI 聊天助手、远程命令规划与执行。
 
-## 项目简介
+## 功能概览
 
-本项目采用前后端分离架构，旨在提供便捷的服务器性能监控与智能化运维体验。
-核心功能包括：
-- **服务器监控**：通过 SSH 远程连接 Linux 服务器，实时采集 CPU、内存等关键指标。
-- **数据可视化**：提供直观的监控仪表盘，展示实时数据与历史趋势图表。
-- **多服务器管理**：支持动态添加和切换不同的服务器进行监控。
-- **AI 赋能** (开发中)：集成百度千帆大模型 (Wenxin Yiyan)，提供智能运维建议。
+- 系统监控：展示 CPU、内存等实时/历史指标
+- 智能诊断：自动读取日志并调用 AI 进行分析
+- 监控配置：按用户维护服务器与组件配置
+- 灵枢助手（AI 聊天）：
+  - WebSocket 实时对话
+  - AI 先规划命令，再按确认执行
+  - 支持分步 `planSteps`（先检测后执行）
+  - 过程进度实时推送（不额外消耗 token）
 
 ## 技术栈
 
-### 后端 (Backend)
-- **核心框架**: Spring Boot 3.4.2
-- **数据库 ORM**: MyBatis Plus 3.5.7
-- **数据库**: MySQL 8.0+
-- **远程连接**: JSch (SSH 协议支持)
-- **AI SDK**: Qianfan SDK (Baidu Cloud)
-- **构建工具**: Maven
-
-### 前端 (Frontend)
-- **核心框架**: Vue 3 (Composition API)
-- **构建工具**: Vite
-- **UI 组件库**: Element Plus
-- **样式框架**: Tailwind CSS
-- **图表库**: Chart.js
-- **HTTP 客户端**: Axios
+- 后端：Spring Boot 3、MyBatis-Plus、MySQL、JSch、WebSocket
+- 前端：Vue 3、Vite、Element Plus、Tailwind CSS、Axios、Chart.js
 
 ## 目录结构
 
-```
+```text
 aiOps/
-├── backend/            # 后端 Spring Boot 项目源码
-│   ├── src/main/java   # Java 源代码
-│   ├── src/main/resources
-│   │   ├── application.yml  # 后端配置文件
-│   │   └── info.md          # RAG 知识库文件 (AI 功能用)
-│   └── pom.xml         # Maven 依赖配置
-├── front/              # 前端 Vue 项目源码
-│   ├── src/            # Vue 源代码
-│   │   ├── api/        # 接口请求定义
-│   │   ├── views/      # 页面视图 (Dashboard.vue 等)
-│   │   └── ...
-│   ├── package.json    # npm 依赖配置
-│   └── vite.config.js  # Vite 配置 (包含代理设置)
-├── sql/                # 数据库脚本
-│   └── schema.sql      # 数据库初始化 SQL
-└── README.md           # 项目说明文档
+├─ backend/
+│  ├─ src/main/java
+│  ├─ src/main/resources
+│  │  ├─ application.yml
+│  │  └─ info.md
+│  └─ pom.xml
+├─ front/
+│  ├─ src/
+│  │  ├─ views/
+│  │  └─ router/
+│  ├─ package.json
+│  └─ vite.config.js
+├─ sql/
+│  └─ schema.sql
+└─ README.md
 ```
 
-## 快速开始
+## 运行环境
 
-### 1. 环境准备
 - JDK 17+
-- Node.js 16+
-- MySQL 8.0+
-- Maven 3.6+
+- Maven 3.8+
+- Node.js 18+
+- MySQL 8+
 
-### 2. 数据库配置
-1. 创建数据库 `ai_ops_db`。
-2. 执行 `sql/schema.sql` 脚本初始化表结构。
-3. 在 `componentconfig` 表中添加需要监控的服务器信息：
-   ```sql
-   INSERT INTO componentconfig (server_ip, username, password) VALUES ('192.168.1.100', 'root', 'your_password');
-   ```
+## 快速启动
 
-### 3. 后端启动
-1. 修改配置文件 `backend/src/main/resources/application.yml`：
-   - 配置数据库连接信息 (`spring.datasource`).
-   - 配置百度千帆 API Key (如需使用 AI 功能).
-   - 可选配置监控频率 (`monitor.schedule.fixed-rate`).
-2. 进入 `backend` 目录并运行：
-   ```bash
-   mvn clean package -DskipTests
-   java -jar target/backend-0.0.1-SNAPSHOT.jar
-   ```
-   后端服务将启动在 `http://localhost:8080`。
+### 1) 初始化数据库
 
-### 4. 前端启动
-1. 进入 `front` 目录：
-   ```bash
-   npm install
-   npm run dev
-   ```
-2. 访问前端页面 (通常为 `http://localhost:5173`)。
+1. 创建数据库：`ai_ops_db`
+2. 执行脚本：`sql/schema.sql`
 
-## 功能配置
+### 2) 配置后端
 
-### 监控频率调整
-在 `application.yml` 中修改 `monitor.schedule.fixed-rate` (单位：毫秒)，默认 60000 (1分钟)。
+编辑 `backend/src/main/resources/application.yml`：
 
-### 添加监控服务器
-直接在数据库 `componentconfig` 表中插入新的服务器记录即可，无需重启服务。系统会自动识别并开始采集新服务器的数据。
+- `spring.datasource.*`：MySQL 连接
+- `qianfan.v2.base-url`：千帆 v2 地址（默认已配置）
+- `qianfan.v2.audit-model-name`：日志分析模型
+- `qianfan.v2.chat-model-name`：聊天助手模型
+- `qianfan.v2.read-timeout-seconds`：AI 请求读取超时（秒）
 
-## 注意事项
-- 确保后端服务器能够通过 SSH (默认端口 22) 连接到目标监控服务器。
-- 目标服务器需支持 `vmstat`, `free`, `uptime` 等基础 Linux 命令。
+**重要：token 不再写死在 yml，使用环境变量**
+
+- Windows PowerShell：
+
+```powershell
+$env:QIANFAN_V2_TOKEN="你的token"
+```
+
+- Linux/macOS：
+
+```bash
+export QIANFAN_V2_TOKEN="你的token"
+```
+
+### 3) 启动后端
+
+```bash
+cd backend
+mvn clean package -DskipTests
+java -jar target/backend-0.0.1-SNAPSHOT.jar
+```
+
+默认地址：`http://localhost:8080`
+
+### 4) 启动前端
+
+```bash
+cd front
+npm install
+npm run dev
+```
+
+默认地址：`http://localhost:5173`
+
+## 灵枢助手说明
+
+- 页面入口：侧边栏 `灵枢助手`
+- 通信方式：`/ws/server/connect`
+- 消息类型：
+  - `ops_chat`：提交聊天/规划/执行请求
+  - `ops_progress`：后端过程进度推送
+  - `ops_chat_result`：最终结果
+
+### 典型请求（前端发送）
+
+```json
+{
+  "type": "ops_chat",
+  "query": "安装 nginx 并设置开机自启",
+  "execute": false,
+  "serverIp": "192.168.1.10",
+  "username": "root",
+  "password": "***"
+}
+```
+
+## 常见问题
+
+### 1) `401 Unauthorized`
+
+通常是 token 无效/过期/权限不足。请在千帆控制台重置 token，并更新环境变量 `QIANFAN_V2_TOKEN`。
+
+### 2) `Unexpected end of file from server` 或 `Read timed out`
+
+是 AI 接口链路/网关超时问题。可尝试：
+
+- 调大 `qianfan.v2.read-timeout-seconds`
+- 简化提问内容
+- 重试请求
+
+### 3) SSH 执行提示权限不足
+
+如 `apt-get` 相关错误，说明当前用户无 root 权限。请使用 root 或 `sudo` 可用账号。
+
+## 安全建议
+
+- 不要把 token、服务器密码提交到 Git
+- 建议将敏感配置放环境变量或密钥管理系统
+- 已泄露的 token 请立即作废并重置

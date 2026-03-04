@@ -57,6 +57,32 @@
                 </div>
               </div>
             </template>
+            <template v-else-if="msg.type === 'risk_confirm'">
+              <div class="space-y-2">
+                <div class="text-ui-warning font-semibold">检测到高风险命令，请确认是否执行</div>
+                <div>命令：{{ msg.command }}</div>
+                <div>风险等级：{{ msg.riskLevel }}</div>
+                <div class="flex gap-2 pt-1">
+                  <el-button size="small" type="danger" :disabled="msg.handled" @click="confirmRiskExecute(msg)">仍要执行</el-button>
+                  <el-button size="small" :disabled="msg.handled" @click="cancelRiskExecute(msg)">取消</el-button>
+                </div>
+              </div>
+            </template>
+            <template v-else-if="msg.type === 'chart_action'">
+              <div class="space-y-2">
+                <div class="text-ui-success font-semibold">AI 判断当前结果适合图表展示</div>
+                <div>原因：{{ msg.reason }}</div>
+                <div>建议范围：{{ msg.timeRange }}</div>
+                <div>模板：{{ msg.chartTemplate }}</div>
+                <div class="flex gap-2 pt-1">
+                  <el-button size="small" type="primary" :disabled="msg.handled" @click="generateChart(msg)">生成图表</el-button>
+                  <el-button size="small" :disabled="msg.handled" @click="cancelChart(msg)">取消</el-button>
+                </div>
+              </div>
+            </template>
+            <template v-else-if="msg.type === 'chart_render'">
+              <InlineMetricsTemplate :title="msg.title" :chart-data="msg.chartData" />
+            </template>
             <template v-else>
               <div>{{ msg.content }}</div>
             </template>
@@ -82,6 +108,7 @@
 <script setup>
 import { nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { listConfigs } from '../api/diagnosis'
+import InlineMetricsTemplate from '../components/InlineMetricsTemplate.vue'
 
 const ws = ref(null)
 const connected = ref(false)
@@ -98,7 +125,38 @@ const messages = ref([])
 const chatBox = ref(null)
 
 const appendMessage = async (role, content) => {
+  if (role === 'assistant') {
+    await humanLikeDelay()
+  }
   messages.value.push({ role, content, type: 'text' })
+  await nextTick()
+  if (chatBox.value) {
+    chatBox.value.scrollTop = chatBox.value.scrollHeight
+  }
+}
+
+const appendChartActionMessage = async (reason, timeRange, chartTemplate) => {
+  messages.value.push({
+    role: 'assistant',
+    type: 'chart_action',
+    reason: reason || '结果包含可视化分析价值',
+    timeRange: timeRange || '1h',
+    chartTemplate: chartTemplate || 'health_overview',
+    handled: false,
+  })
+  await nextTick()
+  if (chatBox.value) {
+    chatBox.value.scrollTop = chatBox.value.scrollHeight
+  }
+}
+
+const appendChartRenderMessage = async chartData => {
+  messages.value.push({
+    role: 'assistant',
+    type: 'chart_render',
+    title: `服务器监控图（${chartData?.timeRange || '1h'}）`,
+    chartData,
+  })
   await nextTick()
   if (chatBox.value) {
     chatBox.value.scrollTop = chatBox.value.scrollHeight
@@ -112,6 +170,21 @@ const appendConfirmMessage = async (query, command, riskLevel) => {
     query,
     command,
     riskLevel: riskLevel || 'medium',
+    handled: false,
+  })
+  await nextTick()
+  if (chatBox.value) {
+    chatBox.value.scrollTop = chatBox.value.scrollHeight
+  }
+}
+
+const appendRiskConfirmMessage = async (command, riskLevel, reason) => {
+  messages.value.push({
+    role: 'assistant',
+    type: 'risk_confirm',
+    command,
+    riskLevel: riskLevel || 'high',
+    reason: reason || '',
     handled: false,
   })
   await nextTick()
@@ -151,9 +224,25 @@ const connectWs = () => {
         const summary = formatOpsResult(data)
         await appendMessage('assistant', summary)
 
+        if (data.needRiskConfirm && data.riskCommand) {
+          await appendRiskConfirmMessage(data.riskCommand, data.riskLevel, data.reply)
+        }
+
         if (!execute.value && !data.executed && data.hasCommand && data.command) {
           await appendConfirmMessage(data.query, data.command, data.riskLevel)
         }
+        if (data.chartSuggest) {
+          await appendChartActionMessage(data.chartReason, data.chartTimeRange, data.chartTemplate)
+        }
+        return
+      }
+      if (data.type === 'chart_data_result') {
+        if (!data.success) {
+          await appendMessage('assistant', data.message || '生成图表失败。')
+          return
+        }
+        await appendMessage('assistant', '图表数据已生成，正在渲染...')
+        await appendChartRenderMessage(data.chartData || {})
         return
       }
       await appendMessage('assistant', typeof event.data === 'string' ? event.data : JSON.stringify(data))
@@ -242,6 +331,65 @@ const cancelExecute = async msg => {
   await appendMessage('assistant', '已取消执行。')
 }
 
+const confirmRiskExecute = async msg => {
+  if (msg.handled) return
+  msg.handled = true
+
+  if (!connected.value || !ws.value) {
+    await appendMessage('assistant', 'WebSocket 未连接，无法执行高风险命令。')
+    return
+  }
+  if (!serverIp.value || !username.value || !password.value) {
+    await appendMessage('assistant', '请先填写 serverIp/username/password 后再执行。')
+    return
+  }
+
+  await appendMessage('assistant', '收到高风险执行确认，正在执行中...')
+  ws.value.send(JSON.stringify({
+    type: 'risk_execute',
+    command: msg.command,
+    serverIp: serverIp.value,
+    username: username.value,
+    password: password.value,
+  }))
+}
+
+const cancelRiskExecute = async msg => {
+  if (msg.handled) return
+  msg.handled = true
+  await appendMessage('assistant', '已取消高风险命令执行。')
+}
+
+const generateChart = async msg => {
+  if (msg.handled) return
+  msg.handled = true
+
+  if (!connected.value || !ws.value) {
+    await appendMessage('assistant', 'WebSocket 未连接，无法生成图表。')
+    return
+  }
+  if (!serverIp.value) {
+    await appendMessage('assistant', '请先填写 serverIp。')
+    return
+  }
+
+  await appendMessage('assistant', '正在生成图表数据...')
+  ws.value.send(JSON.stringify({
+    type: 'chart_data_request',
+    serverIp: serverIp.value,
+    username: username.value,
+    password: password.value,
+    timeRange: msg.timeRange || '1h',
+    chartTemplate: msg.chartTemplate || 'health_overview',
+  }))
+}
+
+const cancelChart = async msg => {
+  if (msg.handled) return
+  msg.handled = true
+  await appendMessage('assistant', '已取消图表生成。')
+}
+
 const loadSavedConnections = async () => {
   try {
     const configs = await listConfigs()
@@ -284,6 +432,12 @@ const formatOpsResult = data => {
   if (data.executed) {
     lines.push(`结果：${shortText(data.execResult || '无返回')}`)
   } else {
+    if (data.needRiskConfirm) {
+      lines.push('检测到高风险命令，等待你确认。')
+      lines.push(`命令：${shortText(data.riskCommand || '')}`)
+      lines.push(`原因：${shortText(data.reply || '')}`)
+      return lines.join('\n')
+    }
     lines.push(`风险：${data.riskLevel || 'medium'}`)
     if (data.hasCommand && data.command) {
       lines.push(`命令：${shortText(data.command)}`)
@@ -298,6 +452,11 @@ const shortText = (text, max = 160) => {
   const val = String(text || '').replace(/\s+/g, ' ').trim()
   if (!val) return ''
   return val.length <= max ? val : `${val.slice(0, max)}...`
+}
+
+const humanLikeDelay = () => {
+  const delay = Math.floor(Math.random() * 401) + 100 // 100ms ~ 500ms
+  return new Promise(resolve => setTimeout(resolve, delay))
 }
 
 onMounted(() => {

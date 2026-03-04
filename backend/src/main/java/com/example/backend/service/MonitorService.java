@@ -10,6 +10,7 @@ import com.jcraft.jsch.ChannelExec;
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.Session;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -30,6 +31,9 @@ public class MonitorService {
 
     @Autowired
     private UserLoginMapper userLoginMapper;
+
+    @Value("${monitor.schedule.fixed-rate:60000}")
+    private long monitorFixedRateMs;
 
     // IP -> History List
     private final Map<String, List<MetricDTO>> historyMap = new ConcurrentHashMap<>();
@@ -208,5 +212,143 @@ public class MonitorService {
             }
         }
         return new ArrayList<>(ownedIps);
+    }
+
+    /**
+     * 提供给 Agent 的监控数据读取入口：
+     * - serverIp: 目标服务器 IP
+     * - timeRange: 例如 30m / 1h / 2h
+     * 返回值是可直接序列化为 JSON 的结构。
+     */
+    public Map<String, Object> getMetrics(String serverIp, String timeRange) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("serverIp", serverIp);
+        result.put("timeRange", timeRange);
+        result.put("sampleIntervalMs", monitorFixedRateMs);
+        result.put("current", getRealtime(serverIp));
+
+        List<MetricDTO> fullHistory = historyMap.getOrDefault(serverIp, Collections.emptyList());
+        int points = calcPointsByRange(timeRange, monitorFixedRateMs);
+        int startIdx = Math.max(0, fullHistory.size() - points);
+        List<MetricDTO> sliced = new ArrayList<>(fullHistory.subList(startIdx, fullHistory.size()));
+
+        result.put("history", sliced);
+        result.put("historyPoints", sliced.size());
+        result.put("summary", buildSummary(sliced));
+        return result;
+    }
+
+    /**
+     * 当历史为空时，允许 Agent 触发一次即时采样。
+     * 采样成功会写入 historyMap / currentInfoMap，便于后续 getMetrics 直接拿到数据。
+     */
+    public Map<String, Object> sampleMetricsOnce(String serverIp, String username, String password) {
+        Map<String, Object> sample = new LinkedHashMap<>();
+        sample.put("serverIp", serverIp);
+
+        if (serverIp == null || serverIp.isBlank() || username == null || username.isBlank() || password == null || password.isBlank()) {
+            sample.put("success", false);
+            sample.put("error", "serverIp/username/password 不能为空");
+            return sample;
+        }
+
+        try {
+            String cpuCmd = "vmstat 1 2 | tail -1 | awk '{print 100 - $15}'";
+            String memCmd = "free -m | grep Mem | awk '{print $3/$2 * 100}'";
+            String uptimeCmd = "uptime -p";
+            String osCmd = "cat /etc/os-release | grep PRETTY_NAME | cut -d= -f2 | tr -d '\"'";
+            String totalMemCmd = "free -h | grep Mem | awk '{print $2}'";
+
+            double cpuUsage = parseDouble(sshExec(serverIp, username, password, cpuCmd));
+            double memUsage = parseDouble(sshExec(serverIp, username, password, memCmd));
+            String upTime = sshExec(serverIp, username, password, uptimeCmd).trim();
+            String os = sshExec(serverIp, username, password, osCmd).trim();
+            String totalMem = sshExec(serverIp, username, password, totalMemCmd).trim();
+
+            String currentTime = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"));
+            MetricDTO metric = new MetricDTO(
+                    currentTime,
+                    Math.round(cpuUsage * 10.0) / 10.0,
+                    Math.round(memUsage * 10.0) / 10.0
+            );
+
+            historyMap.computeIfAbsent(serverIp, k -> new CopyOnWriteArrayList<>()).add(metric);
+            List<MetricDTO> history = historyMap.get(serverIp);
+            if (history.size() > 60) {
+                history.remove(0);
+            }
+
+            Map<String, Object> info = new HashMap<>();
+            info.put("os", os.isEmpty() ? "Linux" : os);
+            info.put("upTime", upTime);
+            info.put("cpuUsage", metric.getCpuUsage());
+            info.put("memUsage", metric.getMemUsage());
+            info.put("totalMemory", totalMem);
+            info.put("processor", "Remote Server");
+            currentInfoMap.put(serverIp, info);
+
+            sample.put("success", true);
+            sample.put("metric", metric);
+            sample.put("current", info);
+            return sample;
+        } catch (Exception e) {
+            sample.put("success", false);
+            sample.put("error", e.getMessage());
+            return sample;
+        }
+    }
+
+    private int calcPointsByRange(String timeRange, long intervalMs) {
+        if (intervalMs <= 0) {
+            intervalMs = 60000;
+        }
+        if (timeRange == null || timeRange.isBlank()) {
+            return 30;
+        }
+
+        String s = timeRange.trim().toLowerCase(Locale.ROOT);
+        try {
+            long minutes;
+            if (s.endsWith("m")) {
+                minutes = Long.parseLong(s.substring(0, s.length() - 1));
+            } else if (s.endsWith("h")) {
+                minutes = Long.parseLong(s.substring(0, s.length() - 1)) * 60;
+            } else {
+                minutes = 30;
+            }
+            long totalMs = minutes * 60_000L;
+            return (int) Math.max(1, Math.ceil((double) totalMs / intervalMs));
+        } catch (Exception ignored) {
+            return 30;
+        }
+    }
+
+    private Map<String, Object> buildSummary(List<MetricDTO> metrics) {
+        Map<String, Object> summary = new LinkedHashMap<>();
+        if (metrics == null || metrics.isEmpty()) {
+            summary.put("avgCpu", 0.0);
+            summary.put("maxCpu", 0.0);
+            summary.put("avgMem", 0.0);
+            summary.put("maxMem", 0.0);
+            return summary;
+        }
+
+        double sumCpu = 0.0;
+        double sumMem = 0.0;
+        double maxCpu = 0.0;
+        double maxMem = 0.0;
+        for (MetricDTO m : metrics) {
+            double cpu = m.getCpuUsage() == null ? 0.0 : m.getCpuUsage();
+            double mem = m.getMemUsage() == null ? 0.0 : m.getMemUsage();
+            sumCpu += cpu;
+            sumMem += mem;
+            maxCpu = Math.max(maxCpu, cpu);
+            maxMem = Math.max(maxMem, mem);
+        }
+        summary.put("avgCpu", Math.round((sumCpu / metrics.size()) * 10.0) / 10.0);
+        summary.put("maxCpu", Math.round(maxCpu * 10.0) / 10.0);
+        summary.put("avgMem", Math.round((sumMem / metrics.size()) * 10.0) / 10.0);
+        summary.put("maxMem", Math.round(maxMem * 10.0) / 10.0);
+        return summary;
     }
 }

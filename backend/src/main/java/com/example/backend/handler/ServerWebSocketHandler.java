@@ -1,7 +1,8 @@
-﻿package com.example.backend.handler;
+package com.example.backend.handler;
 
+import com.example.backend.service.MonitorService;
+import com.example.backend.service.OpsAgentService;
 import com.example.backend.utils.AiUtils;
-import com.example.backend.utils.SshUtils;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -14,6 +15,7 @@ import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -31,7 +33,10 @@ public class ServerWebSocketHandler extends TextWebSocketHandler {
     private AiUtils aiUtils;
 
     @Autowired
-    private SshUtils sshUtils;
+    private OpsAgentService opsAgentService;
+
+    @Autowired
+    private MonitorService monitorService;
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
@@ -61,10 +66,18 @@ public class ServerWebSocketHandler extends TextWebSocketHandler {
                 handleOpsChat(session, node);
                 return;
             }
+            if ("risk_execute".equals(type)) {
+                handleRiskExecute(session, node);
+                return;
+            }
+            if ("chart_data_request".equals(type)) {
+                handleChartDataRequest(session, node);
+                return;
+            }
 
             Map<String, Object> fallback = new HashMap<>();
             fallback.put("type", "error");
-            fallback.put("message", "unsupported type, use type=ops_chat");
+            fallback.put("message", "unsupported type, use type=ops_chat/risk_execute/chart_data_request");
             sendJson(session, fallback);
         } catch (Exception ex) {
             // plain text fallback: regular AI chat
@@ -83,138 +96,227 @@ public class ServerWebSocketHandler extends TextWebSocketHandler {
         String serverIp = node.path("serverIp").asText("");
         String username = node.path("username").asText("");
         String password = node.path("password").asText("");
+
         log.info("ops_chat start, sessionId={}, execute={}, serverIp={}, queryLength={}",
                 session.getId(), execute, serverIp, query == null ? 0 : query.length());
-        sendProgress(session, "start", "收到请求，开始生成执行计划...", 0);
-
-        long aiStart = System.currentTimeMillis();
-        Map<String, Object> plan = aiUtils.planServerCommandByGlm47(query);
-        long aiElapsed = System.currentTimeMillis() - aiStart;
-        String command = String.valueOf(plan.getOrDefault("command", ""));
-        boolean hasCommand = Boolean.TRUE.equals(plan.get("hasCommand"));
-        @SuppressWarnings("unchecked")
-        List<Map<String, String>> planSteps = (List<Map<String, String>>) plan.getOrDefault("planSteps", List.of());
-        log.info("ops_chat ai_plan done, sessionId={}, aiElapsedMs={}, hasCommand={}, commandLength={}",
-                session.getId(), aiElapsed, hasCommand, command == null ? 0 : command.length());
-        sendProgress(session, "ai_plan_done", "AI 计划生成完成", aiElapsed);
+        sendProgress(session, "start", "收到请求，开始进入 Agent 自主执行...", 0);
 
         Map<String, Object> result = new HashMap<>();
         result.put("type", "ops_chat_result");
         result.put("query", query);
-        result.put("reply", plan.getOrDefault("reply", ""));
-        result.put("riskLevel", plan.getOrDefault("riskLevel", "medium"));
-        result.put("needConfirm", plan.getOrDefault("needConfirm", true));
-        result.put("hasCommand", hasCommand);
-        result.put("command", command);
-        result.put("planSteps", planSteps);
 
-        if (execute) {
-            if (planSteps != null && !planSteps.isEmpty()) {
-                if (!StringUtils.hasText(serverIp) || !StringUtils.hasText(username) || !StringUtils.hasText(password)) {
-                    result.put("executed", false);
-                    result.put("execResult", "缺少 serverIp/username/password，无法按计划执行命令。");
-                    sendJson(session, result);
-                    log.info("ops_chat finished, sessionId={}, totalElapsedMs={}", session.getId(), System.currentTimeMillis() - start);
-                    return;
-                }
-                long sshStart = System.currentTimeMillis();
-                sendProgress(session, "plan_exec_start", "开始按计划逐步执行...", System.currentTimeMillis() - start);
-                String execResult = execByPlan(session, serverIp, username, password, planSteps);
-                long sshElapsed = System.currentTimeMillis() - sshStart;
-                result.put("executed", true);
-                result.put("execResult", execResult);
-                log.info("ops_chat ssh_plan_exec done, sessionId={}, sshElapsedMs={}, stepCount={}",
-                        session.getId(), sshElapsed, planSteps.size());
-                sendProgress(session, "plan_exec_done", "计划执行结束", sshElapsed);
-            } else if (!hasCommand || !StringUtils.hasText(command)) {
-                result.put("executed", false);
-                result.put("execResult", "AI 未提供可执行命令。");
-            } else if (!StringUtils.hasText(serverIp) || !StringUtils.hasText(username) || !StringUtils.hasText(password)) {
-                result.put("executed", false);
-                result.put("execResult", "缺少 serverIp/username/password，无法执行命令。");
-            } else {
-                long sshStart = System.currentTimeMillis();
-                sendProgress(session, "cmd_exec_start", "开始执行命令...", System.currentTimeMillis() - start);
-                String execResult = sshUtils.exec(serverIp, username, password, command);
-                long sshElapsed = System.currentTimeMillis() - sshStart;
-                result.put("executed", true);
-                result.put("execResult", execResult);
-                log.info("ops_chat ssh_exec done, sessionId={}, sshElapsedMs={}", session.getId(), sshElapsed);
-                sendProgress(session, "cmd_exec_done", "命令执行结束", sshElapsed);
-            }
-        } else {
+        if (!execute) {
             result.put("executed", false);
-            result.put("execResult", "未执行。若要执行，请携带 execute=true。 ");
+            result.put("reply", "当前请求未开启执行模式（execute=false），未启动 Agent。");
+            result.put("execResult", "未执行。若要启动自主 Agent，请携带 execute=true。");
+            appendChartAdvice(query, result);
+            sendJson(session, result);
+            sendProgress(session, "finished", "流程结束", System.currentTimeMillis() - start);
+            return;
         }
 
+        if (!StringUtils.hasText(serverIp) || !StringUtils.hasText(username) || !StringUtils.hasText(password)) {
+            result.put("executed", false);
+            result.put("reply", "缺少 serverIp/username/password，无法启动 Agent。");
+            result.put("execResult", "参数不足。");
+            appendChartAdvice(query, result);
+            sendJson(session, result);
+            sendProgress(session, "finished", "流程结束", System.currentTimeMillis() - start);
+            return;
+        }
+
+        try {
+            String finalSummary = opsAgentService.runAgentLoop(query, serverIp, username, password, session);
+            result.put("executed", true);
+            result.put("reply", finalSummary);
+            result.put("execResult", "Agent 循环已完成，请参考上方实时进度日志。");
+        } catch (OpsAgentService.HighRiskCommandException e) {
+            result.put("executed", false);
+            result.put("needRiskConfirm", true);
+            result.put("riskLevel", "high");
+            result.put("riskCommand", e.getCommand());
+            result.put("reply", e.getReason());
+            result.put("execResult", "检测到高风险命令，等待用户确认。");
+        } catch (Exception e) {
+            log.error("ops_chat agent loop failed, sessionId={}", session.getId(), e);
+            result.put("executed", false);
+            result.put("reply", "Agent 执行失败");
+            result.put("execResult", e.getMessage());
+        }
+
+        appendChartAdvice(query, result);
         sendJson(session, result);
         sendProgress(session, "finished", "流程结束", System.currentTimeMillis() - start);
         log.info("ops_chat finished, sessionId={}, totalElapsedMs={}", session.getId(), System.currentTimeMillis() - start);
     }
 
-    private String execByPlan(WebSocketSession session, String serverIp, String username, String password, List<Map<String, String>> planSteps) {
+    /**
+     * 用户点击高风险确认后的执行入口。
+     */
+    private void handleRiskExecute(WebSocketSession session, JsonNode node) {
+        long start = System.currentTimeMillis();
+        String command = node.path("command").asText("");
+        String serverIp = node.path("serverIp").asText("");
+        String username = node.path("username").asText("");
+        String password = node.path("password").asText("");
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("type", "ops_chat_result");
+        result.put("query", "[高风险确认执行]");
+
+        if (!StringUtils.hasText(command)) {
+            result.put("executed", false);
+            result.put("reply", "缺少命令，无法执行。");
+            result.put("execResult", "risk_execute.command 为空");
+            sendJson(session, result);
+            return;
+        }
+
         if (!StringUtils.hasText(serverIp) || !StringUtils.hasText(username) || !StringUtils.hasText(password)) {
-            return "缺少 serverIp/username/password，无法按计划执行命令。";
+            result.put("executed", false);
+            result.put("reply", "缺少 serverIp/username/password，无法执行。 ");
+            result.put("execResult", "参数不足。");
+            sendJson(session, result);
+            return;
         }
 
-        StringBuilder trace = new StringBuilder();
-        int index = 1;
-        for (Map<String, String> step : planSteps) {
-            String desc = safe(step.get("description"));
-            String checkCommand = safe(step.get("checkCommand"));
-            String expectContains = safe(step.get("expectContains"));
-            String onPass = safe(step.get("onPass"));
-            String onFail = safe(step.get("onFail"));
-            String executeCommand = safe(step.get("executeCommand"));
+        try {
+            sendProgress(session, "risk_exec_start", "用户已确认，开始执行高风险命令...", System.currentTimeMillis() - start);
+            String output = opsAgentService.executeApprovedRiskCommand(serverIp, username, password, command);
+            result.put("executed", true);
+            result.put("reply", "高风险命令已执行完成。");
+            result.put("execResult", output);
+            sendProgress(session, "risk_exec_done", "高风险命令执行完成", System.currentTimeMillis() - start);
+        } catch (Exception e) {
+            log.error("risk_execute failed, sessionId={}", session.getId(), e);
+            result.put("executed", false);
+            result.put("reply", "高风险命令执行失败");
+            result.put("execResult", e.getMessage());
+        }
 
-            trace.append("Step ").append(index).append(": ").append(desc).append("\n");
-            log.info("ops_chat plan step start, step={}, desc={}", index, desc);
-            sendProgress(session, "plan_step_start", "步骤 " + index + " 开始: " + desc, 0);
+        appendChartAdvice("[高风险确认执行]", result);
+        sendJson(session, result);
+    }
 
-            if (StringUtils.hasText(checkCommand)) {
-                String checkOut = sshUtils.exec(serverIp, username, password, checkCommand);
-                boolean passed = !StringUtils.hasText(expectContains) || checkOut.contains(expectContains);
-                String action = passed ? onPass : onFail;
+    /**
+     * 前端点击“生成图表”后请求图表数据。
+     */
+    private void handleChartDataRequest(WebSocketSession session, JsonNode node) {
+        String serverIp = node.path("serverIp").asText("");
+        String username = node.path("username").asText("");
+        String password = node.path("password").asText("");
+        String timeRange = node.path("timeRange").asText("1h");
+        String chartTemplate = node.path("chartTemplate").asText("health_overview");
 
-                trace.append("  check=").append(passed ? "PASS" : "FAIL").append(", action=").append(action).append("\n");
-                sendProgress(session, "plan_step_checked",
-                        "步骤 " + index + " 检查完成: " + (passed ? "通过" : "失败") + "，动作=" + action, 0);
+        Map<String, Object> result = new HashMap<>();
+        result.put("type", "chart_data_result");
+        result.put("success", false);
 
-                if ("stop".equalsIgnoreCase(action)) {
-                    trace.append("  result=STOP\n");
-                    sendProgress(session, "plan_step_stop", "步骤 " + index + " 触发停止", 0);
-                    trace.append("Final: 流程已停止。\n");
-                    return trace.toString();
-                }
-                if ("execute".equalsIgnoreCase(action) && StringUtils.hasText(executeCommand)) {
-                    String execOut = sshUtils.exec(serverIp, username, password, executeCommand);
-                    trace.append("  execute=RUN, output=").append(shortOutput(execOut)).append("\n");
-                    sendProgress(session, "plan_step_exec", "步骤 " + index + " 已执行命令", 0);
-                }
-            } else if (StringUtils.hasText(executeCommand)) {
-                String execOut = sshUtils.exec(serverIp, username, password, executeCommand);
-                trace.append("  execute=RUN, output=").append(shortOutput(execOut)).append("\n");
-                sendProgress(session, "plan_step_exec", "步骤 " + index + " 已执行命令", 0);
-            } else {
-                trace.append("  skipped\n");
-                sendProgress(session, "plan_step_skip", "步骤 " + index + " 已跳过（无命令）", 0);
+        if (!StringUtils.hasText(serverIp)) {
+            result.put("message", "缺少 serverIp，无法生成图表。");
+            sendJson(session, result);
+            return;
+        }
+
+        try {
+            Map<String, Object> metrics = monitorService.getMetrics(serverIp, timeRange);
+            int historyPoints = 0;
+            try {
+                historyPoints = Integer.parseInt(String.valueOf(metrics.get("historyPoints")));
+            } catch (Exception ignored) {
             }
-            index++;
+
+            if (historyPoints <= 0 && StringUtils.hasText(username) && StringUtils.hasText(password)) {
+                Map<String, Object> sampleResult = monitorService.sampleMetricsOnce(serverIp, username, password);
+                metrics = monitorService.getMetrics(serverIp, timeRange);
+                metrics.put("sampleOnceWhenEmpty", sampleResult);
+            }
+
+            result.put("success", true);
+            result.put("message", "图表数据已生成。");
+            result.put("chartTemplate", chartTemplate);
+            result.put("chartData", buildChartPayload(chartTemplate, metrics));
+            sendJson(session, result);
+        } catch (Exception e) {
+            result.put("message", "生成图表数据失败: " + e.getMessage());
+            sendJson(session, result);
         }
-        trace.append("Final: 流程执行完成。\n");
-        return trace.toString();
     }
 
-    private String safe(String value) {
-        return value == null ? "" : value.trim();
+    private void appendChartAdvice(String query, Map<String, Object> result) {
+        try {
+            Map<String, Object> chartAdvice = aiUtils.analyzeChartNeed(
+                    query,
+                    String.valueOf(result.getOrDefault("reply", "")),
+                    String.valueOf(result.getOrDefault("execResult", ""))
+            );
+            result.putAll(chartAdvice);
+        } catch (Exception ignored) {
+            result.put("chartSuggest", false);
+        }
     }
 
-    private String shortOutput(String output) {
-        if (!StringUtils.hasText(output)) {
-            return "(empty)";
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> buildChartPayload(String chartTemplate, Map<String, Object> metrics) {
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("template", chartTemplate);
+        payload.put("timeRange", metrics.getOrDefault("timeRange", "1h"));
+        payload.put("serverIp", metrics.getOrDefault("serverIp", ""));
+        payload.put("history", metrics.getOrDefault("history", List.of()));
+        payload.put("summary", metrics.getOrDefault("summary", Map.of()));
+        payload.put("current", metrics.getOrDefault("current", Map.of()));
+
+        List<Map<String, Object>> history = (List<Map<String, Object>>) payload.get("history");
+        List<Map<String, Object>> anomalies = new ArrayList<>();
+        for (Map<String, Object> p : history) {
+            double cpu = toDouble(p.get("cpuUsage"));
+            double mem = toDouble(p.get("memUsage"));
+            if (cpu >= 85 || mem >= 85) {
+                Map<String, Object> a = new HashMap<>();
+                a.put("time", p.getOrDefault("time", ""));
+                a.put("cpuUsage", cpu);
+                a.put("memUsage", mem);
+                a.put("level", cpu >= 95 || mem >= 95 ? "critical" : "warning");
+                anomalies.add(a);
+            }
         }
-        String oneLine = output.replace("\r", " ").replace("\n", " ").trim();
-        return oneLine.length() <= 120 ? oneLine : oneLine.substring(0, 120) + "...";
+        payload.put("anomalies", anomalies);
+
+        Map<String, Object> summary = (Map<String, Object>) payload.get("summary");
+        double avgCpu = toDouble(summary.get("avgCpu"));
+        double maxCpu = toDouble(summary.get("maxCpu"));
+        double avgMem = toDouble(summary.get("avgMem"));
+        double maxMem = toDouble(summary.get("maxMem"));
+        double cpuScore = scoreByUsage(avgCpu, maxCpu);
+        double memScore = scoreByUsage(avgMem, maxMem);
+        double stabilityScore = Math.max(0, 100 - anomalies.size() * 5.0);
+        double capacityScore = Math.max(0, 100 - Math.max(maxCpu, maxMem));
+        Map<String, Object> healthScores = new HashMap<>();
+        healthScores.put("cpuScore", round1(cpuScore));
+        healthScores.put("memScore", round1(memScore));
+        healthScores.put("stabilityScore", round1(stabilityScore));
+        healthScores.put("capacityScore", round1(capacityScore));
+        healthScores.put("overall", round1((cpuScore + memScore + stabilityScore + capacityScore) / 4.0));
+        payload.put("healthScores", healthScores);
+        return payload;
+    }
+
+    private double scoreByUsage(double avg, double max) {
+        double penalty = avg * 0.5 + max * 0.5;
+        return Math.max(0, 100 - penalty);
+    }
+
+    private double toDouble(Object v) {
+        if (v == null) return 0.0;
+        try {
+            return Double.parseDouble(String.valueOf(v));
+        } catch (Exception ignored) {
+            return 0.0;
+        }
+    }
+
+    private double round1(double v) {
+        return Math.round(v * 10.0) / 10.0;
     }
 
     @Override

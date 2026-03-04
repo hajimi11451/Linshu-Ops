@@ -21,7 +21,7 @@ qianfan:
     base-url: https://qianfan.baidubce.com/v2
     # 鉴权 Token（401 通常是这个值无效、过期或与当前服务不匹配）
     # 从环境变量读取，避免明文泄露：QIANFAN_V2_TOKEN
-    token: ${QIANFAN_V2_TOKEN:}
+    token: bce-v3/ALTAK-dvedy0sPkTXP8SbIaZC3f/f2a909d9b925265fe7e576b0099833f7a831c961
     # 日志审核/日志分析使用的模型
     audit-model-name: glm-4.7
     # 聊天助手（含命令规划）使用的模型

@@ -1,4 +1,4 @@
-﻿package com.example.backend.utils;
+package com.example.backend.utils;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -22,11 +22,11 @@ import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 @Slf4j
 @Component
@@ -88,28 +88,71 @@ public class AiUtils {
         return callQianfanApi(systemPrompt, userQuery, chatModelName);
     }
 
+    /**
+     * 在对话结束后判断是否建议生成图表（由 AI 判断）。
+     * 返回结构：{ chartSuggest: boolean, chartReason: string, chartTimeRange: string, chartTemplate: string }
+     */
+    public Map<String, Object> analyzeChartNeed(String userQuery, String finalReply, String execResult) {
+        Map<String, Object> result = new HashMap<>();
+        result.put("chartSuggest", false);
+        result.put("chartReason", "无需图表");
+        result.put("chartTimeRange", "1h");
+        result.put("chartTemplate", "health_overview");
+
+        String systemPrompt = "你是运维分析助手。请判断当前对话结果是否适合用图表展示。"
+                + "仅返回 JSON：{\"chartSuggest\":true/false,\"chartReason\":\"...\",\"chartTimeRange\":\"30m|1h|2h\",\"chartTemplate\":\"health_overview|cpu_mem_trend|anomaly_timeline|health_score_radar\"}。"
+                + "如果涉及 CPU/内存/负载/趋势/波动/峰值/监控，优先建议 chartSuggest=true。";
+        String userPrompt = "用户问题: " + (userQuery == null ? "" : userQuery)
+                + "\n最终回复: " + (finalReply == null ? "" : finalReply)
+                + "\n执行结果: " + (execResult == null ? "" : execResult);
+
+        try {
+            String resp = callQianfanApi(systemPrompt, userPrompt, chatModelName);
+            JsonNode root = objectMapper.readTree(resp);
+            if (root.isObject()) {
+                boolean suggest = root.path("chartSuggest").asBoolean(false);
+                String reason = root.path("chartReason").asText("无需图表");
+                String range = root.path("chartTimeRange").asText("1h");
+                String template = root.path("chartTemplate").asText("health_overview");
+                if (!"30m".equals(range) && !"1h".equals(range) && !"2h".equals(range)) {
+                    range = "1h";
+                }
+                if (!"health_overview".equals(template)
+                        && !"cpu_mem_trend".equals(template)
+                        && !"anomaly_timeline".equals(template)
+                        && !"health_score_radar".equals(template)) {
+                    template = "health_overview";
+                }
+                result.put("chartSuggest", suggest);
+                result.put("chartReason", reason);
+                result.put("chartTimeRange", range);
+                result.put("chartTemplate", template);
+                return result;
+            }
+        } catch (Exception ignored) {
+            // fallback to keyword heuristic below
+        }
+
+        String merged = ((userQuery == null ? "" : userQuery) + " " + (finalReply == null ? "" : finalReply) + " " + (execResult == null ? "" : execResult))
+                .toLowerCase();
+        if (merged.contains("cpu") || merged.contains("内存") || merged.contains("负载")
+                || merged.contains("趋势") || merged.contains("波动") || merged.contains("监控")) {
+            result.put("chartSuggest", true);
+            result.put("chartReason", "包含监控与趋势分析信息，适合图表展示。");
+            result.put("chartTimeRange", "1h");
+            result.put("chartTemplate", "health_overview");
+        }
+        return result;
+    }
+
     public Map<String, Object> planServerCommandByGlm47(String userQuery) {
-        String systemPrompt = "你是 Linux 运维助手。请把用户需求拆解为可执行的计划步骤，并返回 JSON，不要输出 Markdown 和额外文本。"
-                + "顶层 JSON 字段固定为：reply,hasCommand,command,riskLevel,needConfirm,planSteps。"
+        String systemPrompt = "你是 Linux 运维助手。请根据用户需求生成可直接执行的一条命令并返回 JSON，不要输出 Markdown 和额外文本。"
+                + "JSON 字段固定为：reply,hasCommand,command,riskLevel,needConfirm。"
                 + "其中 hasCommand 和 needConfirm 必须是布尔值；riskLevel 只能是 low/medium/high。"
-                + "planSteps 是数组，每项字段固定为：description,checkCommand,expectContains,onPass,onFail,executeCommand。"
-                + "onPass/onFail 只能是 continue|execute|stop。"
-                + "要求：优先使用“先检测后执行”的嵌套逻辑。"
-                + "例如创建文件前，应先检测目录是否存在、文件是否已存在，再决定是否创建。"
-                + "如果无需执行命令，hasCommand=false 且 command 为空字符串，planSteps 为空数组。";
+                + "如果无需执行命令，hasCommand=false 且 command 为空字符串。";
 
         String response = callQianfanApi(systemPrompt, userQuery, "glm-4.7");
-        Map<String, Object> parsed = parseCommandPlan(response);
-        if (Boolean.TRUE.equals(parsed.get("hasCommand")) || hasPlanSteps(parsed)) {
-            return parsed;
-        }
-
-        // AI 超时/断连/异常时本地兜底，不额外消耗 token
-        if (isAiUnavailableResponse(response)) {
-            log.warn("AI planning unavailable, fallback to local rule planner. query={}", userQuery);
-            return buildFallbackPlan(userQuery, response);
-        }
-        return parsed;
+        return parseCommandPlan(response);
     }
 
     public String generateLogCommand(String component, String osType) {
@@ -231,106 +274,6 @@ public class AiUtils {
         return "continue";
     }
 
-    private boolean hasPlanSteps(Map<String, Object> plan) {
-        Object raw = plan.get("planSteps");
-        if (!(raw instanceof List<?> list)) {
-            return false;
-        }
-        return !list.isEmpty();
-    }
-
-    private boolean isAiUnavailableResponse(String response) {
-        if (!StringUtils.hasText(response)) {
-            return true;
-        }
-        String s = response.trim();
-        return s.contains("超时") || s.contains("连接中断") || s.contains("调用 AI 服务时发生异常");
-    }
-
-    private Map<String, Object> buildFallbackPlan(String query, String aiErrorText) {
-        Map<String, Object> result = new HashMap<>();
-        result.put("reply", "AI 规划不可用，已切换本地规则规划。");
-        result.put("hasCommand", true);
-        result.put("command", "");
-        result.put("riskLevel", "low");
-        result.put("needConfirm", true);
-
-        String folderName = extractFolderName(query);
-        String fileName = extractFileName(query);
-
-        if (!StringUtils.hasText(folderName)) {
-            folderName = "default_home_folder";
-        }
-        if (!StringUtils.hasText(fileName)) {
-            fileName = "new_file.txt";
-        } else if (!fileName.contains(".")) {
-            fileName = fileName + ".txt";
-        }
-
-        String folderPath = "/home/" + folderName;
-        String filePath = folderPath + "/" + fileName;
-
-        List<Map<String, String>> steps = new ArrayList<>();
-        steps.add(step(
-                "检查目标目录是否存在",
-                "test -d '" + folderPath + "' && echo YES || echo NO",
-                "YES",
-                "continue",
-                "stop",
-                ""
-        ));
-        steps.add(step(
-                "检查目标文件是否已存在",
-                "test -f '" + filePath + "' && echo YES || echo NO",
-                "YES",
-                "stop",
-                "execute",
-                "touch '" + filePath + "' && echo CREATED"
-        ));
-
-        result.put("planSteps", steps);
-        result.put("fallback", true);
-        result.put("fallbackReason", aiErrorText);
-        return result;
-    }
-
-    private Map<String, String> step(String description, String checkCommand, String expectContains,
-                                     String onPass, String onFail, String executeCommand) {
-        Map<String, String> step = new HashMap<>();
-        step.put("description", description);
-        step.put("checkCommand", checkCommand);
-        step.put("expectContains", expectContains);
-        step.put("onPass", onPass);
-        step.put("onFail", onFail);
-        step.put("executeCommand", executeCommand);
-        return step;
-    }
-
-    private String extractFolderName(String query) {
-        if (!StringUtils.hasText(query)) return "";
-        Pattern p = Pattern.compile("home目录(?:下|上)?(?:的)?([\\u4e00-\\u9fa5A-Za-z0-9_\\-]+?)文件夹");
-        Matcher m = p.matcher(query);
-        if (m.find()) {
-            return m.group(1).trim();
-        }
-        return "";
-    }
-
-    private String extractFileName(String query) {
-        if (!StringUtils.hasText(query)) return "";
-        Pattern named = Pattern.compile("(?:叫做|名叫)([\\u4e00-\\u9fa5A-Za-z0-9_\\-.]+)");
-        Matcher m1 = named.matcher(query);
-        if (m1.find()) {
-            return m1.group(1).trim();
-        }
-        Pattern create = Pattern.compile("创建([\\u4e00-\\u9fa5A-Za-z0-9_\\-.]+?)(?:文件|txt|文本)");
-        Matcher m2 = create.matcher(query);
-        if (m2.find()) {
-            return m2.group(1).trim();
-        }
-        return "";
-    }
-
     private String callQianfanApi(String systemPrompt, String userPrompt, String targetModel) {
         long start = System.currentTimeMillis();
         try {
@@ -392,6 +335,111 @@ public class AiUtils {
         }
         log.warn("AI request finished without valid content, model={}, elapsedMs={}", targetModel, System.currentTimeMillis() - start);
         return "未能获取有效回答。";
+    }
+
+    /**
+     * 调用千帆 Chat Completions（支持 message 历史 + tools/function calling）。
+     * 返回结构：
+     * - assistantContent: assistant 普通文本内容
+     * - toolCalls: 工具调用列表，每项包含 id/name/argumentsRaw/arguments
+     * - assistantMessage: 可直接追加到 messages 的 assistant 消息（含 tool_calls）
+     */
+    public Map<String, Object> callQianfanApiWithTools(List<Map<String, Object>> messages,
+                                                       List<Map<String, Object>> tools) {
+        long start = System.currentTimeMillis();
+        Map<String, Object> result = new HashMap<>();
+        result.put("assistantContent", "");
+        result.put("toolCalls", new ArrayList<Map<String, Object>>());
+        Map<String, Object> defaultAssistantMessage = new HashMap<>();
+        defaultAssistantMessage.put("role", "assistant");
+        defaultAssistantMessage.put("content", "");
+        result.put("assistantMessage", defaultAssistantMessage);
+
+        try {
+            String url = baseUrl;
+            if (!url.endsWith("/")) {
+                url += "/";
+            }
+            url += "chat/completions";
+
+            // 这里显式组装 JSON：model + messages + tools
+            Map<String, Object> requestBody = new LinkedHashMap<>();
+            requestBody.put("model", chatModelName);
+            requestBody.put("messages", messages == null ? Collections.emptyList() : messages);
+            requestBody.put("tools", tools == null ? Collections.emptyList() : tools);
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.set("Authorization", "Bearer " + token);
+            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
+
+            ResponseEntity<String> response = restTemplate.postForEntity(url, entity, String.class);
+            if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
+                result.put("assistantContent", "AI 返回为空或状态异常。");
+                return result;
+            }
+
+            JsonNode root = objectMapper.readTree(response.getBody());
+            JsonNode choice = root.path("choices").isArray() && root.path("choices").size() > 0
+                    ? root.path("choices").get(0) : null;
+            if (choice == null) {
+                result.put("assistantContent", "AI 未返回可用 choices。");
+                return result;
+            }
+
+            JsonNode msgNode = choice.path("message");
+            String content = msgNode.path("content").asText("");
+            result.put("assistantContent", content);
+
+            Map<String, Object> assistantMessage = new LinkedHashMap<>();
+            assistantMessage.put("role", "assistant");
+            assistantMessage.put("content", content);
+
+            List<Map<String, Object>> toolCalls = new ArrayList<>();
+            JsonNode toolCallsNode = msgNode.path("tool_calls");
+            if (toolCallsNode.isArray()) {
+                List<Map<String, Object>> rawToolCalls = new ArrayList<>();
+                // 解析千帆 tool_calls，提取 function.name 和 arguments(JSON 字符串)
+                for (JsonNode tc : toolCallsNode) {
+                    Map<String, Object> rawTc = objectMapper.convertValue(tc, Map.class);
+                    rawToolCalls.add(rawTc);
+
+                    Map<String, Object> parsed = new LinkedHashMap<>();
+                    String toolCallId = tc.path("id").asText("");
+                    String toolName = tc.path("function").path("name").asText("");
+                    String argumentsRaw = tc.path("function").path("arguments").asText("{}");
+
+                    Map<String, Object> argumentsObj;
+                    try {
+                        JsonNode argsNode = objectMapper.readTree(argumentsRaw);
+                        argumentsObj = objectMapper.convertValue(argsNode, Map.class);
+                    } catch (Exception ignored) {
+                        argumentsObj = new HashMap<>();
+                    }
+
+                    parsed.put("id", toolCallId);
+                    parsed.put("name", toolName);
+                    parsed.put("argumentsRaw", argumentsRaw);
+                    parsed.put("arguments", argumentsObj);
+                    toolCalls.add(parsed);
+                }
+                assistantMessage.put("tool_calls", rawToolCalls);
+            }
+
+            result.put("toolCalls", toolCalls);
+            result.put("assistantMessage", assistantMessage);
+            log.info("AI tools request success, model={}, toolCalls={}, elapsedMs={}",
+                    chatModelName, toolCalls.size(), System.currentTimeMillis() - start);
+            return result;
+        } catch (HttpClientErrorException e) {
+            log.error("AI tools request http error, status={}, body={}", e.getStatusCode(), e.getResponseBodyAsString(), e);
+            result.put("assistantContent", "调用 AI 服务时发生异常。");
+            return result;
+        } catch (Exception e) {
+            log.error("AI tools request exception, elapsedMs={}", System.currentTimeMillis() - start, e);
+            result.put("assistantContent", "AI 服务连接中断或超时，请稍后重试。");
+            return result;
+        }
     }
 
     private RestTemplate buildRestTemplate() {

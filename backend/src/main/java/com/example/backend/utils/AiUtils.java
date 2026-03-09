@@ -67,9 +67,12 @@ public class AiUtils {
         }
 
         systemPrompt += "请严格遵守以下输出规则：\n"
-                + "1. 如果发现异常或错误，返回标准 JSON 对象，字段包含 component,errorSummary,analysisResult,suggestedActions,riskLevel。\n"
-                + "2. 如果日志无异常，errorSummary/analysisResult/suggestedActions 填写\"无\"，riskLevel 填写\"无\"。\n"
-                + "3. 直接返回 JSON，不要 Markdown。";
+                + "1. 只允许返回一个 JSON 对象，字段必须且只能包含 component,errorSummary,analysisResult,suggestedActions,riskLevel。\n"
+                + "2. riskLevel 只允许是 \"高\"、\"中\"、\"低\"、\"无\" 四个值，绝对不要返回 high/medium/low/normal/warning 等英文。\n"
+                + "3. suggestedActions 必须是 JSON 数组，例如 [\"检查配置文件\",\"重启服务\"]，每项是一条独立的处理建议，最多 4 条，不要返回长段落，不要返回编号拼接字符串。\n"
+                + "4. errorSummary 要简洁，analysisResult 要清楚说明根因或现象，不要输出 Markdown，不要输出代码块，不要增加其他字段。\n"
+                + "5. 如果日志无异常，errorSummary 和 analysisResult 填写 \"无\"，suggestedActions 返回 []，riskLevel 返回 \"无\"。\n"
+                + "6. 输出示例：{\"component\":\"nginx\",\"errorSummary\":\"配置加载失败\",\"analysisResult\":\"Nginx 配置文件存在语法错误，导致服务启动失败。\",\"suggestedActions\":[\"执行 nginx -t 检查配置语法\",\"修复报错配置项后重新加载服务\"],\"riskLevel\":\"中\"}";
 
         return callQianfanApi(systemPrompt, logContent, auditModelName);
     }

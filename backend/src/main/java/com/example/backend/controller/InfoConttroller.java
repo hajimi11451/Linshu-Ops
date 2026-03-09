@@ -46,14 +46,14 @@ public class InfoConttroller {
     public ResponseEntity<?> insertProcess(@RequestBody Map<String,String> request){
         String res= infoService.insertProcess(request);
         Map<String, Object> response = new HashMap<>();
-        if (res.equals("存储成功")){
+        if (res != null && res.contains("成功")){
             response.put("code", 200);
             response.put("msg", res);
             return ResponseEntity.ok(response);
         }else {
-            response.put("code", 401);
+            response.put("code", 400);
             response.put("msg", res);
-            return ResponseEntity.status(401).body(response);
+            return ResponseEntity.badRequest().body(response);
         }
     }
 

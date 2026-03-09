@@ -41,7 +41,7 @@
         <el-table-column prop="riskLevel" label="风险等级" min-width="120">
           <template #default="{ row }">
             <el-tag :type="getTagType(row.riskLevel)" effect="light" size="small">
-              {{ row.riskLevel || 'Normal' }}
+              {{ formatRiskLevel(row.riskLevel) }}
             </el-tag>
           </template>
         </el-table-column>
@@ -75,7 +75,13 @@
           show-overflow-tooltip
         >
           <template #default="{ row }">
-            {{ row.suggestedActions || '-' }}
+            {{ formatSuggestedActions(row.suggestedActions) }}
+          </template>
+        </el-table-column>
+
+        <el-table-column label="操作" min-width="140" fixed="right">
+          <template #default="{ row }">
+            <el-button type="primary" link @click="goDetail(row)">查看详情</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -144,11 +150,34 @@ function formatDate(value) {
 }
 
 function getTagType(level) {
-  const L = (level || '').toString()
-  if (['High', 'Error', '高'].includes(L)) return 'danger'
-  if (['Medium', 'Warning', '中'].includes(L)) return 'warning'
-  if (['Low', '低'].includes(L)) return 'info'
+  const normalizedLevel = formatRiskLevel(level)
+  if (normalizedLevel === '高') return 'danger'
+  if (normalizedLevel === '中') return 'warning'
+  if (normalizedLevel === '低') return 'info'
   return ''
+}
+
+function formatRiskLevel(level) {
+  const value = String(level || '').trim()
+  if (['高', '中', '低', '无'].includes(value)) return value
+  const lowered = value.toLowerCase()
+  if (lowered.includes('high') || lowered.includes('critical') || lowered.includes('error')) return '高'
+  if (lowered.includes('medium') || lowered.includes('warning') || lowered.includes('warn')) return '中'
+  if (lowered.includes('low') || lowered.includes('info')) return '低'
+  return '无'
+}
+
+function formatSuggestedActions(value) {
+  const text = String(value || '').trim()
+  if (!text || text === '[]') return '-'
+  try {
+    const parsed = JSON.parse(text)
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      return parsed.join('；')
+    }
+  } catch {
+  }
+  return text.replace(/[\r\n]+/g, '；')
 }
 
 async function fetchAllInfo() {
@@ -172,6 +201,14 @@ async function fetchAllInfo() {
 
 function goDashboard() {
   router.push('/dashboard')
+}
+
+function goDetail(row) {
+  if (!row?.id) {
+    ElMessage.warning('当前记录缺少详情 ID')
+    return
+  }
+  router.push({ name: 'info-detail', params: { id: row.id } })
 }
 
 async function handleClearAll() {

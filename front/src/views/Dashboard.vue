@@ -351,23 +351,35 @@ const updateMonitorChart = (history) => {
   }
 }
 
+const normalizeRiskLevel = level => {
+  const value = String(level || '').trim()
+  if (['高', '中', '低', '无'].includes(value)) return value
+  const lowered = value.toLowerCase()
+  if (lowered.includes('high') || lowered.includes('critical') || lowered.includes('error')) return '高'
+  if (lowered.includes('medium') || lowered.includes('warning') || lowered.includes('warn')) return '中'
+  if (lowered.includes('low') || lowered.includes('info')) return '低'
+  if (lowered.includes('normal') || lowered.includes('none') || lowered.includes('ok') || lowered.includes('safe')) return '无'
+  return '中'
+}
+
 // 获取后端数据 (Info)
 const fetchInfo = async () => {
   loadingInfo.value = true
   try {
     const res = await selectAllInfo()
     if (res && Array.isArray(res)) {
-      infoList.value = res
+      infoList.value = res.map(item => ({
+        ...item,
+        riskLevel: normalizeRiskLevel(item?.riskLevel)
+      }))
 
       activeAlertCount.value = infoList.value.filter(i =>
-        ['High', 'Medium', 'Error', 'Warning'].includes(i.riskLevel)
+        ['高', '中'].includes(i.riskLevel)
       ).length
 
       totalLogsCount.value = infoList.value.length
 
-      highRiskCount.value = infoList.value.filter(i =>
-        ['High', 'Error'].includes(i.riskLevel)
-      ).length
+      highRiskCount.value = infoList.value.filter(i => i.riskLevel === '高').length
 
       const penalty =
         highRiskCount.value * 10 +
@@ -383,16 +395,20 @@ const fetchInfo = async () => {
 
 const getAlertClass = level => {
   const map = {
-    High: 'bg-red-50 border-ui-error',
-    Medium: 'bg-orange-50 border-ui-warning',
-    Low: 'bg-blue-50 border-brand',
-    Normal: 'bg-gray-50 border-gray-300',
+    高: 'bg-red-50 border-ui-error',
+    中: 'bg-orange-50 border-ui-warning',
+    低: 'bg-blue-50 border-brand',
+    无: 'bg-gray-50 border-gray-300',
   }
-  return map[level] || map.Normal
+  return map[normalizeRiskLevel(level)] || map.无
 }
 
 const formatDate = dateStr => {
   if (!dateStr) return ''
+  if (Array.isArray(dateStr)) {
+    const [y, m, d, h, min, s] = dateStr
+    return new Date(y, (m || 1) - 1, d || 1, h || 0, min || 0, s || 0).toLocaleString()
+  }
   return new Date(dateStr).toLocaleString()
 }
 

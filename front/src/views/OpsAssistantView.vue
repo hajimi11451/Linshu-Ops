@@ -82,9 +82,10 @@
             <template v-else-if="msg.type === 'chart_action'">
               <div class="space-y-2">
                 <div class="text-ui-success font-semibold">AI 判断当前结果适合图表展示</div>
+                <div>图表标题：{{ msg.chartTitle }}</div>
                 <div>原因：{{ msg.reason }}</div>
                 <div>建议范围：{{ msg.timeRange }}</div>
-                <div>模板：{{ msg.chartTemplate }}</div>
+                <div>图表类型：{{ chartTemplateLabel(msg.chartTemplate) }}</div>
                 <div class="flex gap-2 pt-1">
                   <el-button size="small" type="primary" :disabled="msg.handled" @click="generateChart(msg)">生成图表</el-button>
                   <el-button size="small" :disabled="msg.handled" @click="cancelChart(msg)">取消</el-button>
@@ -110,7 +111,7 @@
           resize="none"
           :disabled="isAgentRunning"
           placeholder="例如：帮我安装 nginx 并设置开机自启"
-          @keydown.enter.exact.prevent="sendMessage"
+          @keydown.enter.exact.prevent="sendMessage()"
         />
         <el-button
           :type="isAgentRunning ? 'danger' : 'primary'"
@@ -127,15 +128,21 @@
 
 <script setup>
 import { nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { listConfigs } from '../api/diagnosis'
 import InlineMetricsTemplate from '../components/InlineMetricsTemplate.vue'
 import MarkdownIt from 'markdown-it'
+
+const PENDING_TASK_KEY = 'opsAssistantPendingTask'
 
 const md = new MarkdownIt({
   html: false,
   linkify: true,
   typographer: true,
 })
+
+const route = useRoute()
+const router = useRouter()
 
 const ws = ref(null)
 const connected = ref(false)
@@ -148,6 +155,8 @@ const maxRounds = ref(15)
 const isAgentRunning = ref(false)
 const selectedSavedConnection = ref('')
 const savedConnections = ref([])
+const savedConnectionsLoaded = ref(false)
+const pendingTaskHandled = ref(false)
 
 const input = ref('')
 const messages = ref([])
@@ -165,13 +174,14 @@ const appendMessage = async (role, content) => {
   }
 }
 
-const appendChartActionMessage = async (reason, timeRange, chartTemplate) => {
+const appendChartActionMessage = async (reason, timeRange, chartTemplate, chartTitle) => {
   messages.value.push({
     role: 'assistant',
     type: 'chart_action',
     reason: reason || '结果包含可视化分析价值',
     timeRange: timeRange || '1h',
     chartTemplate: chartTemplate || 'health_overview',
+    chartTitle: chartTitle || '服务器健康总览',
     handled: false,
   })
   await nextTick()
@@ -184,7 +194,7 @@ const appendChartRenderMessage = async chartData => {
   messages.value.push({
     role: 'assistant',
     type: 'chart_render',
-    title: `服务器监控图（${chartData?.timeRange || '1h'}）`,
+    title: chartData?.title || `服务器监控图（${chartData?.timeRange || '1h'}）`,
     chartData,
   })
   await nextTick()
@@ -240,14 +250,88 @@ const getWsUrl = () => {
   return `${protocol}//${window.location.host}/ws/server/connect`
 }
 
+const readPendingTask = () => {
+  if (pendingTaskHandled.value || route.query.autostart !== '1') return null
+  try {
+    const raw = sessionStorage.getItem(PENDING_TASK_KEY)
+    if (!raw) return null
+    return JSON.parse(raw)
+  } catch (error) {
+    console.error('Failed to parse pending ops task', error)
+    return null
+  }
+}
+
+const clearPendingTask = async () => {
+  pendingTaskHandled.value = true
+  sessionStorage.removeItem(PENDING_TASK_KEY)
+  if (route.query.autostart === '1') {
+    await router.replace({ name: 'ops-assistant' })
+  }
+}
+
+const tryApplyPendingConnection = pendingTask => {
+  const targetIp = String(pendingTask?.serverIp || '').trim()
+  if (!targetIp) {
+    return Boolean(serverIp.value && username.value && password.value)
+  }
+
+  serverIp.value = targetIp
+
+  const matched = savedConnections.value.find(item => item.serverIp === targetIp)
+  if (matched) {
+    selectedSavedConnection.value = matched.id
+    handleSavedConnectionChange(matched.id)
+    return true
+  }
+
+  return serverIp.value === targetIp && Boolean(username.value && password.value)
+}
+
+const maybeRunPendingTask = async () => {
+  const pendingTask = readPendingTask()
+  if (!connected.value || !ws.value || !savedConnectionsLoaded.value) {
+    return
+  }
+
+  if (!pendingTask) {
+    if (route.query.autostart === '1') {
+      await clearPendingTask()
+    }
+    return
+  }
+
+  const canExecute = tryApplyPendingConnection(pendingTask)
+  input.value = String(pendingTask.query || '').trim()
+  execute.value = Boolean(pendingTask.autoExecute)
+
+  if (!input.value) {
+    await clearPendingTask()
+    return
+  }
+
+  if (!canExecute && execute.value) {
+    await appendMessage('assistant', '已带入你选中的处理方式，但未找到匹配的服务器连接，请先补全或选择连接后再发送。')
+    await clearPendingTask()
+    return
+  }
+
+  await sendMessage(input.value)
+  await clearPendingTask()
+}
+
 const connectWs = () => {
-  if (connected.value) return
+  if (connected.value) {
+    maybeRunPendingTask()
+    return
+  }
   const socket = new WebSocket(getWsUrl())
 
   socket.onopen = async () => {
     ws.value = socket
     connected.value = true
     await appendMessage('assistant', '连接已建立，可以开始聊天。')
+    await maybeRunPendingTask()
   }
 
   socket.onmessage = async event => {
@@ -282,7 +366,7 @@ const connectWs = () => {
           await appendConfirmMessage(data.query, data.command, data.riskLevel)
         }
         if (data.chartSuggest) {
-          await appendChartActionMessage(data.chartReason, data.chartTimeRange, data.chartTemplate)
+          await appendChartActionMessage(data.chartReason, data.chartTimeRange, data.chartTemplate, data.chartTitle)
         }
         return
       }
@@ -325,9 +409,9 @@ const disconnectWs = () => {
   }
 }
 
-const sendMessage = async () => {
+const sendMessage = async presetText => {
   if (isAgentRunning.value) return
-  const text = input.value.trim()
+  const text = typeof presetText === 'string' ? presetText.trim() : input.value.trim()
   if (!text) return
 
   if (!connected.value || !ws.value) {
@@ -479,6 +563,7 @@ const generateChart = async msg => {
     password: password.value,
     timeRange: msg.timeRange || '1h',
     chartTemplate: msg.chartTemplate || 'health_overview',
+    chartTitle: msg.chartTitle || '服务器健康总览',
   }))
 }
 
@@ -523,6 +608,9 @@ const loadSavedConnections = async () => {
     savedConnections.value = Array.from(unique.values())
   } catch (error) {
     console.error('Failed to load saved connections', error)
+  } finally {
+    savedConnectionsLoaded.value = true
+    await maybeRunPendingTask()
   }
 }
 
@@ -563,6 +651,19 @@ const formatOpsResult = data => {
     lines.push(`风险等级：${data.riskLevel || 'medium'}`)
   }
   return lines.join('\n\n')
+}
+
+const chartTemplateLabel = template => {
+  switch (template) {
+    case 'cpu_mem_trend':
+      return 'CPU / 内存趋势图'
+    case 'anomaly_timeline':
+      return '异常时序图'
+    case 'health_score_radar':
+      return '健康评分雷达图'
+    default:
+      return '服务器健康总览'
+  }
 }
 
 const toUserFriendlyText = text => {

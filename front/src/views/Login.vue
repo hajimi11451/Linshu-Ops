@@ -16,7 +16,7 @@
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
             </svg>
           </div>
-          <span class="text-2xl font-bold tracking-wide">AIOps</span>
+          <span class="text-2xl font-bold tracking-wide">Mimir-Ops</span>
         </div>
 
         <div>
@@ -46,9 +46,7 @@
         </ul>
       </div>
 
-      <div class="absolute bottom-8 text-xs text-gray-500">
-        © 2024 Enterprise AIOps Inc. All rights reserved.
-      </div>
+      
     </div>
 
     <!-- 右侧登录表单 (55%) -->
@@ -92,17 +90,17 @@
               id="password"
               type="password"
               autocomplete="current-password"
-              placeholder="••••••••••••"
+              placeholder="请输入密码"
               show-password
               class="appearance-none block w-full h-12 placeholder-gray-400 input-focus sm:text-sm"
             />
           </el-form-item>
 
-          <div class="flex items-center justify-between">
+          <!-- <div class="flex items-center justify-between">
             <el-checkbox v-model="remember" class="text-sm text-ui-text">
               记住我
             </el-checkbox>
-          </div>
+          </div> -->
 
           <div>
             <el-button

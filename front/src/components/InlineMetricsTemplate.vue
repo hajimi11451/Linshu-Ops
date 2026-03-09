@@ -2,7 +2,7 @@
   <div class="space-y-2">
     <div class="text-xs text-ui-subtext">{{ title }}</div>
     <div class="bg-white border border-ui-border rounded p-2">
-      <canvas ref="canvasRef" style="max-height: 260px;"></canvas>
+      <div ref="chartRef" class="h-[260px] w-full"></div>
     </div>
     <div v-if="template === 'health_overview'" class="grid grid-cols-2 gap-2 text-xs">
       <div class="bg-gray-50 rounded p-2">CPU 平均: {{ summary.avgCpu ?? 0 }}%</div>
@@ -14,8 +14,8 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import Chart from 'chart.js/auto'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import * as echarts from 'echarts'
 
 const props = defineProps({
   title: { type: String, default: '服务器监控图表' },
@@ -23,105 +23,47 @@ const props = defineProps({
 })
 
 const template = computed(() => props.chartData?.template || 'health_overview')
-const history = computed(() => (Array.isArray(props.chartData?.history) ? props.chartData.history : []))
 const summary = computed(() => props.chartData?.summary || {})
-const anomalies = computed(() => (Array.isArray(props.chartData?.anomalies) ? props.chartData.anomalies : []))
-const scores = computed(() => props.chartData?.healthScores || {})
+const option = computed(() => props.chartData?.option || {})
 
-const canvasRef = ref(null)
+const chartRef = ref(null)
 let chartInstance = null
 
-const renderChart = () => {
-  if (!canvasRef.value) return
-  if (chartInstance) {
-    chartInstance.destroy()
-    chartInstance = null
+const initChart = () => {
+  if (!chartRef.value) return null
+  if (!chartInstance) {
+    chartInstance = echarts.init(chartRef.value)
   }
-
-  const labels = history.value.map(item => item.time || '')
-  const cpu = history.value.map(item => Number(item.cpuUsage || 0))
-  const mem = history.value.map(item => Number(item.memUsage || 0))
-
-  const commonOptions = {
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: { legend: { position: 'top' } },
-  }
-
-  if (template.value === 'cpu_mem_trend') {
-    chartInstance = new Chart(canvasRef.value, {
-      type: 'line',
-      data: {
-        labels,
-        datasets: [
-          { label: 'CPU 使用率(%)', data: cpu, borderColor: '#4299e1', backgroundColor: 'rgba(66,153,225,.15)', tension: 0.3, fill: true },
-          { label: '内存使用率(%)', data: mem, borderColor: '#48bb78', backgroundColor: 'rgba(72,187,120,.15)', tension: 0.3, fill: true },
-        ],
-      },
-      options: { ...commonOptions, scales: { y: { min: 0, max: 100 } } },
-    })
-    return
-  }
-
-  if (template.value === 'anomaly_timeline') {
-    chartInstance = new Chart(canvasRef.value, {
-      type: 'bar',
-      data: {
-        labels: anomalies.value.map(i => i.time || ''),
-        datasets: [
-          { label: '异常 CPU(%)', data: anomalies.value.map(i => Number(i.cpuUsage || 0)), backgroundColor: 'rgba(245,101,101,.7)' },
-          { label: '异常内存(%)', data: anomalies.value.map(i => Number(i.memUsage || 0)), backgroundColor: 'rgba(237,137,54,.7)' },
-        ],
-      },
-      options: { ...commonOptions, scales: { y: { min: 0, max: 100 } } },
-    })
-    return
-  }
-
-  if (template.value === 'health_score_radar') {
-    chartInstance = new Chart(canvasRef.value, {
-      type: 'radar',
-      data: {
-        labels: ['CPU', '内存', '稳定性', '容量'],
-        datasets: [
-          {
-            label: '健康评分',
-            data: [
-              Number(scores.value.cpuScore || 0),
-              Number(scores.value.memScore || 0),
-              Number(scores.value.stabilityScore || 0),
-              Number(scores.value.capacityScore || 0),
-            ],
-            borderColor: '#3182ce',
-            backgroundColor: 'rgba(49,130,206,.2)',
-          },
-        ],
-      },
-      options: { ...commonOptions, scales: { r: { min: 0, max: 100 } } },
-    })
-    return
-  }
-
-  // health_overview 默认模板：双线 + 阈值参考线
-  chartInstance = new Chart(canvasRef.value, {
-    type: 'line',
-    data: {
-      labels,
-      datasets: [
-        { label: 'CPU 使用率(%)', data: cpu, borderColor: '#4299e1', backgroundColor: 'rgba(66,153,225,.15)', tension: 0.3, fill: true },
-        { label: '内存使用率(%)', data: mem, borderColor: '#48bb78', backgroundColor: 'rgba(72,187,120,.15)', tension: 0.3, fill: true },
-        { label: '85% 阈值', data: labels.map(() => 85), borderColor: '#ed8936', pointRadius: 0, borderDash: [5, 5], tension: 0 },
-      ],
-    },
-    options: { ...commonOptions, scales: { y: { min: 0, max: 100 } } },
-  })
+  return chartInstance
 }
 
-onMounted(renderChart)
+const renderChart = async () => {
+  await nextTick()
+  const instance = initChart()
+  if (!instance) return
+  instance.setOption(option.value, true)
+  instance.resize()
+}
+
+const handleResize = () => {
+  if (chartInstance) {
+    chartInstance.resize()
+  }
+}
+
+onMounted(() => {
+  renderChart()
+  window.addEventListener('resize', handleResize)
+})
+
 watch(() => props.chartData, renderChart, { deep: true })
 
 onBeforeUnmount(() => {
-  if (chartInstance) chartInstance.destroy()
+  window.removeEventListener('resize', handleResize)
+  if (chartInstance) {
+    chartInstance.dispose()
+    chartInstance = null
+  }
 })
 </script>
 

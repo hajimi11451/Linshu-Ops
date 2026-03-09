@@ -1,5 +1,6 @@
 package com.example.backend.handler;
 
+import com.example.backend.dto.MetricDTO;
 import com.example.backend.service.MonitorService;
 import com.example.backend.service.OpsAgentService;
 import com.example.backend.utils.AiUtils;
@@ -18,6 +19,7 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -119,7 +121,7 @@ public class ServerWebSocketHandler extends TextWebSocketHandler {
             result.put("executed", false);
             result.put("reply", "当前请求未开启执行模式（execute=false），未启动 Agent。");
             result.put("execResult", "未执行。若要启动自主 Agent，请携带 execute=true。");
-            appendChartAdvice(query, result);
+            result.put("chartSuggest", false);
             sendJson(session, result);
             sendProgress(session, "finished", "流程结束", System.currentTimeMillis() - start);
             return;
@@ -131,12 +133,13 @@ public class ServerWebSocketHandler extends TextWebSocketHandler {
             if (history != null && !history.isEmpty()) {
                 log.info("Resuming agent loop from history, sessionId={}", session.getId());
                 try {
-                    String finalSummary = opsAgentService.runAgentLoop(
+                    OpsAgentService.AgentRunResult agentResult = opsAgentService.runAgentLoopWithAdvice(
                         "[继续执行]", serverIp, username, password, maxRounds, null, session, history
                     );
                     result.put("executed", true);
-                    result.put("reply", finalSummary);
+                    result.put("reply", agentResult.getFinalSummary());
                     result.put("execResult", "Agent 循环已完成。");
+                    mergeChartAdvice(result, agentResult);
                 } catch (OpsAgentService.HighRiskCommandException e) {
                     AGENT_HISTORY.put(session.getId(), e.getHistory());
                     result.put("executed", false);
@@ -145,16 +148,21 @@ public class ServerWebSocketHandler extends TextWebSocketHandler {
                     result.put("riskCommand", e.getCommand());
                     result.put("reply", e.getReason());
                     result.put("execResult", "检测到高风险命令，等待用户确认。");
+                    result.put("chartSuggest", false);
                 } catch (OpsAgentService.AgentTimeoutException e) {
                     AGENT_HISTORY.put(session.getId(), e.getHistory());
                     result.put("executed", false);
                     result.put("timeout", true);
                     result.put("reply", e.getMessage());
                     result.put("execResult", "再次达到最大轮数，任务暂停。");
+                    result.put("chartSuggest", false);
                     sendProgress(session, "agent_timeout", e.getMessage(), System.currentTimeMillis() - start);
                 } catch (Exception e) {
                     log.error("Resumed agent loop failed", e);
+                    result.put("executed", false);
                     result.put("reply", "恢复执行失败: " + e.getMessage());
+                    result.put("execResult", e.getMessage());
+                    result.put("chartSuggest", false);
                 }
                 sendJson(session, result);
                 sendProgress(session, "finished", "流程结束", System.currentTimeMillis() - start);
@@ -166,7 +174,7 @@ public class ServerWebSocketHandler extends TextWebSocketHandler {
             result.put("executed", false);
             result.put("reply", "缺少 serverIp/username/password，无法启动 Agent。");
             result.put("execResult", "参数不足。");
-            appendChartAdvice(query, result);
+            result.put("chartSuggest", false);
             sendJson(session, result);
             sendProgress(session, "finished", "流程结束", System.currentTimeMillis() - start);
             return;
@@ -175,20 +183,22 @@ public class ServerWebSocketHandler extends TextWebSocketHandler {
         try {
             // 清除旧历史
             AGENT_HISTORY.remove(session.getId());
-            String finalSummary = opsAgentService.runAgentLoop(query, serverIp, username, password, maxRounds, null, session);
+            OpsAgentService.AgentRunResult agentResult = opsAgentService.runAgentLoopWithAdvice(query, serverIp, username, password, maxRounds, null, session);
             result.put("executed", true);
-            result.put("reply", finalSummary);
+            result.put("reply", agentResult.getFinalSummary());
             result.put("execResult", "Agent 循环已完成，请参考上方实时进度日志。");
+            mergeChartAdvice(result, agentResult);
         } catch (OpsAgentService.HighRiskCommandException e) {
             // 保存历史上下文
             AGENT_HISTORY.put(session.getId(), e.getHistory());
-            
+
             result.put("executed", false);
             result.put("needRiskConfirm", true);
             result.put("riskLevel", "high");
             result.put("riskCommand", e.getCommand());
             result.put("reply", e.getReason());
             result.put("execResult", "检测到高风险命令，等待用户确认。");
+            result.put("chartSuggest", false);
         } catch (OpsAgentService.AgentTimeoutException e) {
              // 超时，保存上下文以便继续
             AGENT_HISTORY.put(session.getId(), e.getHistory());
@@ -197,15 +207,16 @@ public class ServerWebSocketHandler extends TextWebSocketHandler {
             result.put("timeout", true);
             result.put("reply", e.getMessage());
             result.put("execResult", "达到最大轮数，任务暂停。你可以发送“继续”来恢复执行。");
+            result.put("chartSuggest", false);
             sendProgress(session, "agent_timeout", e.getMessage(), System.currentTimeMillis() - start);
         } catch (Exception e) {
             log.error("ops_chat agent loop failed, sessionId={}", session.getId(), e);
             result.put("executed", false);
             result.put("reply", "Agent 执行失败");
             result.put("execResult", e.getMessage());
+            result.put("chartSuggest", false);
         }
 
-        appendChartAdvice(query, result);
         sendJson(session, result);
         sendProgress(session, "finished", "流程结束", System.currentTimeMillis() - start);
         log.info("ops_chat finished, sessionId={}, totalElapsedMs={}", session.getId(), System.currentTimeMillis() - start);
@@ -272,9 +283,9 @@ public class ServerWebSocketHandler extends TextWebSocketHandler {
             if (history == null) {
                 history = new ArrayList<>();
             }
-            
+
             // 继续执行 Agent 循环，传入 history 和 approvedRiskCommand
-            String finalSummary = opsAgentService.runAgentLoop(
+            OpsAgentService.AgentRunResult agentResult = opsAgentService.runAgentLoopWithAdvice(
                 "[高风险确认继续执行]", 
                 serverIp, 
                 username, 
@@ -286,8 +297,9 @@ public class ServerWebSocketHandler extends TextWebSocketHandler {
             );
 
             result.put("executed", true);
-            result.put("reply", finalSummary);
+            result.put("reply", agentResult.getFinalSummary());
             result.put("execResult", "高风险命令执行并后续流程已完成。");
+            mergeChartAdvice(result, agentResult);
             sendProgress(session, "risk_exec_done", "高风险命令及后续流程执行完成", System.currentTimeMillis() - start);
         } catch (OpsAgentService.HighRiskCommandException e) {
              // 再次遇到高风险命令（可能是新的）
@@ -299,14 +311,15 @@ public class ServerWebSocketHandler extends TextWebSocketHandler {
             result.put("riskCommand", e.getCommand());
             result.put("reply", e.getReason());
             result.put("execResult", "再次检测到高风险命令，等待用户确认。");
+            result.put("chartSuggest", false);
         } catch (Exception e) {
             log.error("risk_execute failed, sessionId={}", session.getId(), e);
             result.put("executed", false);
             result.put("reply", "高风险命令执行失败");
             result.put("execResult", e.getMessage());
+            result.put("chartSuggest", false);
         }
 
-        appendChartAdvice("[高风险确认执行]", result);
         sendJson(session, result);
     }
 
@@ -319,6 +332,7 @@ public class ServerWebSocketHandler extends TextWebSocketHandler {
         String password = node.path("password").asText("");
         String timeRange = node.path("timeRange").asText("1h");
         String chartTemplate = node.path("chartTemplate").asText("health_overview");
+        String chartTitle = node.path("chartTitle").asText("");
 
         Map<String, Object> result = new HashMap<>();
         result.put("type", "chart_data_result");
@@ -347,7 +361,7 @@ public class ServerWebSocketHandler extends TextWebSocketHandler {
             result.put("success", true);
             result.put("message", "图表数据已生成。");
             result.put("chartTemplate", chartTemplate);
-            result.put("chartData", buildChartPayload(chartTemplate, metrics));
+            result.put("chartData", buildChartPayload(chartTemplate, chartTitle, metrics));
             sendJson(session, result);
         } catch (Exception e) {
             result.put("message", "生成图表数据失败: " + e.getMessage());
@@ -355,46 +369,101 @@ public class ServerWebSocketHandler extends TextWebSocketHandler {
         }
     }
 
-    private void appendChartAdvice(String query, Map<String, Object> result) {
-        try {
-            Map<String, Object> chartAdvice = aiUtils.analyzeChartNeed(
-                    query,
-                    String.valueOf(result.getOrDefault("reply", "")),
-                    String.valueOf(result.getOrDefault("execResult", ""))
-            );
-            result.putAll(chartAdvice);
-        } catch (Exception ignored) {
+    private void mergeChartAdvice(Map<String, Object> result, OpsAgentService.AgentRunResult agentResult) {
+        if (agentResult == null) {
             result.put("chartSuggest", false);
+            return;
         }
+        result.put("chartSuggest", agentResult.isChartSuggest());
+        result.put("chartReason", agentResult.getChartReason());
+        result.put("chartTimeRange", agentResult.getChartTimeRange());
+        result.put("chartTemplate", agentResult.getChartTemplate());
+        result.put("chartTitle", agentResult.getChartTitle());
     }
 
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> buildChartPayload(String chartTemplate, Map<String, Object> metrics) {
-        Map<String, Object> payload = new HashMap<>();
-        payload.put("template", chartTemplate);
-        payload.put("timeRange", metrics.getOrDefault("timeRange", "1h"));
+    private Map<String, Object> buildChartPayload(String chartTemplate, String chartTitle, Map<String, Object> metrics) {
+        String normalizedTemplate = normalizeChartTemplate(chartTemplate);
+        String timeRange = String.valueOf(metrics.getOrDefault("timeRange", "1h"));
+        String resolvedTitle = StringUtils.hasText(chartTitle)
+                ? chartTitle
+                : defaultChartTitle(normalizedTemplate, timeRange);
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("renderer", "echarts");
+        payload.put("template", normalizedTemplate);
+        payload.put("title", resolvedTitle);
+        payload.put("timeRange", timeRange);
         payload.put("serverIp", metrics.getOrDefault("serverIp", ""));
-        payload.put("history", metrics.getOrDefault("history", List.of()));
-        payload.put("summary", metrics.getOrDefault("summary", Map.of()));
-        payload.put("current", metrics.getOrDefault("current", Map.of()));
 
-        List<Map<String, Object>> history = (List<Map<String, Object>>) payload.get("history");
-        List<Map<String, Object>> anomalies = new ArrayList<>();
-        for (Map<String, Object> p : history) {
-            double cpu = toDouble(p.get("cpuUsage"));
-            double mem = toDouble(p.get("memUsage"));
-            if (cpu >= 85 || mem >= 85) {
-                Map<String, Object> a = new HashMap<>();
-                a.put("time", p.getOrDefault("time", ""));
-                a.put("cpuUsage", cpu);
-                a.put("memUsage", mem);
-                a.put("level", cpu >= 95 || mem >= 95 ? "critical" : "warning");
-                anomalies.add(a);
-            }
-        }
+        List<Map<String, Object>> history = normalizeHistory(metrics.get("history"));
+        Map<String, Object> summary = asObjectMap(metrics.get("summary"));
+        Map<String, Object> current = asObjectMap(metrics.get("current"));
+        List<Map<String, Object>> anomalies = buildAnomalies(history);
+        Map<String, Object> healthScores = buildHealthScores(summary, anomalies);
+
+        payload.put("history", history);
+        payload.put("summary", summary);
+        payload.put("current", current);
         payload.put("anomalies", anomalies);
+        payload.put("healthScores", healthScores);
+        payload.put("option", buildEchartsOption(normalizedTemplate, history, anomalies, healthScores));
+        return payload;
+    }
 
-        Map<String, Object> summary = (Map<String, Object>) payload.get("summary");
+    private List<Map<String, Object>> normalizeHistory(Object rawHistory) {
+        List<Map<String, Object>> normalized = new ArrayList<>();
+        if (!(rawHistory instanceof List<?> items)) {
+            return normalized;
+        }
+
+        for (Object item : items) {
+            Map<String, Object> point = new LinkedHashMap<>();
+            if (item instanceof MetricDTO metric) {
+                point.put("time", metric.getTime());
+                point.put("cpuUsage", metric.getCpuUsage());
+                point.put("memUsage", metric.getMemUsage());
+            } else if (item instanceof Map<?, ?> rawMap) {
+                point.put("time", rawMap.containsKey("time") ? rawMap.get("time") : "");
+                point.put("cpuUsage", rawMap.containsKey("cpuUsage") ? rawMap.get("cpuUsage") : 0);
+                point.put("memUsage", rawMap.containsKey("memUsage") ? rawMap.get("memUsage") : 0);
+            } else {
+                Map<String, Object> converted = objectMapper.convertValue(item, Map.class);
+                point.put("time", converted.getOrDefault("time", ""));
+                point.put("cpuUsage", converted.getOrDefault("cpuUsage", 0));
+                point.put("memUsage", converted.getOrDefault("memUsage", 0));
+            }
+            normalized.add(point);
+        }
+        return normalized;
+    }
+
+    private Map<String, Object> asObjectMap(Object rawMap) {
+        Map<String, Object> normalized = new LinkedHashMap<>();
+        if (rawMap instanceof Map<?, ?> source) {
+            source.forEach((key, value) -> normalized.put(String.valueOf(key), value));
+        }
+        return normalized;
+    }
+
+    private List<Map<String, Object>> buildAnomalies(List<Map<String, Object>> history) {
+        List<Map<String, Object>> anomalies = new ArrayList<>();
+        for (Map<String, Object> point : history) {
+            double cpu = toDouble(point.get("cpuUsage"));
+            double mem = toDouble(point.get("memUsage"));
+            if (cpu < 85 && mem < 85) {
+                continue;
+            }
+            Map<String, Object> anomaly = new LinkedHashMap<>();
+            anomaly.put("time", point.getOrDefault("time", ""));
+            anomaly.put("cpuUsage", round1(cpu));
+            anomaly.put("memUsage", round1(mem));
+            anomaly.put("level", cpu >= 95 || mem >= 95 ? "critical" : "warning");
+            anomalies.add(anomaly);
+        }
+        return anomalies;
+    }
+
+    private Map<String, Object> buildHealthScores(Map<String, Object> summary, List<Map<String, Object>> anomalies) {
         double avgCpu = toDouble(summary.get("avgCpu"));
         double maxCpu = toDouble(summary.get("maxCpu"));
         double avgMem = toDouble(summary.get("avgMem"));
@@ -403,14 +472,196 @@ public class ServerWebSocketHandler extends TextWebSocketHandler {
         double memScore = scoreByUsage(avgMem, maxMem);
         double stabilityScore = Math.max(0, 100 - anomalies.size() * 5.0);
         double capacityScore = Math.max(0, 100 - Math.max(maxCpu, maxMem));
-        Map<String, Object> healthScores = new HashMap<>();
+
+        Map<String, Object> healthScores = new LinkedHashMap<>();
         healthScores.put("cpuScore", round1(cpuScore));
         healthScores.put("memScore", round1(memScore));
         healthScores.put("stabilityScore", round1(stabilityScore));
         healthScores.put("capacityScore", round1(capacityScore));
         healthScores.put("overall", round1((cpuScore + memScore + stabilityScore + capacityScore) / 4.0));
-        payload.put("healthScores", healthScores);
-        return payload;
+        return healthScores;
+    }
+
+    private Map<String, Object> buildEchartsOption(String chartTemplate,
+                                                   List<Map<String, Object>> history,
+                                                   List<Map<String, Object>> anomalies,
+                                                   Map<String, Object> healthScores) {
+        switch (chartTemplate) {
+            case "cpu_mem_trend":
+                return buildCpuMemTrendOption(history, false);
+            case "anomaly_timeline":
+                return buildAnomalyTimelineOption(anomalies);
+            case "health_score_radar":
+                return buildHealthScoreRadarOption(healthScores, history.isEmpty());
+            default:
+                return buildCpuMemTrendOption(history, true);
+        }
+    }
+
+    private Map<String, Object> buildCpuMemTrendOption(List<Map<String, Object>> history, boolean withThreshold) {
+        List<String> labels = new ArrayList<>();
+        List<Double> cpuData = new ArrayList<>();
+        List<Double> memData = new ArrayList<>();
+        for (Map<String, Object> point : history) {
+            labels.add(String.valueOf(point.getOrDefault("time", "")));
+            cpuData.add(round1(toDouble(point.get("cpuUsage"))));
+            memData.add(round1(toDouble(point.get("memUsage"))));
+        }
+
+        Map<String, Object> option = baseCartesianOption(labels);
+        List<Map<String, Object>> series = new ArrayList<>();
+        series.add(lineSeries("CPU 使用率(%)", cpuData, "#5470C6", "rgba(84,112,198,0.15)"));
+        series.add(lineSeries("内存使用率(%)", memData, "#91CC75", "rgba(145,204,117,0.15)"));
+        if (withThreshold) {
+            List<Double> threshold = new ArrayList<>();
+            for (int index = 0; index < labels.size(); index++) {
+                threshold.add(85.0);
+            }
+            Map<String, Object> thresholdSeries = new LinkedHashMap<>();
+            thresholdSeries.put("name", "85% 阈值");
+            thresholdSeries.put("type", "line");
+            thresholdSeries.put("showSymbol", false);
+            thresholdSeries.put("data", threshold);
+            thresholdSeries.put("lineStyle", Map.of("type", "dashed", "width", 2, "color", "#EE6666"));
+            thresholdSeries.put("itemStyle", Map.of("color", "#EE6666"));
+            series.add(thresholdSeries);
+        }
+        option.put("series", series);
+        if (labels.isEmpty()) {
+            option.put("graphic", noDataGraphic("暂无可展示的监控数据"));
+        }
+        return option;
+    }
+
+    private Map<String, Object> buildAnomalyTimelineOption(List<Map<String, Object>> anomalies) {
+        List<String> labels = new ArrayList<>();
+        List<Double> cpuData = new ArrayList<>();
+        List<Double> memData = new ArrayList<>();
+        for (Map<String, Object> anomaly : anomalies) {
+            labels.add(String.valueOf(anomaly.getOrDefault("time", "")));
+            cpuData.add(round1(toDouble(anomaly.get("cpuUsage"))));
+            memData.add(round1(toDouble(anomaly.get("memUsage"))));
+        }
+
+        Map<String, Object> option = baseCartesianOption(labels);
+        option.put("series", List.of(
+                barSeries("异常 CPU(%)", cpuData, "#EE6666"),
+                barSeries("异常内存(%)", memData, "#FAC858")
+        ));
+        if (labels.isEmpty()) {
+            option.put("graphic", noDataGraphic("当前时间范围内没有明显异常"));
+        }
+        return option;
+    }
+
+    private Map<String, Object> buildHealthScoreRadarOption(Map<String, Object> healthScores, boolean emptyHistory) {
+        Map<String, Object> option = new LinkedHashMap<>();
+        option.put("tooltip", Map.of("trigger", "item"));
+        option.put("legend", Map.of("top", 0));
+        option.put("radar", Map.of(
+                "radius", "60%",
+                "indicator", List.of(
+                        Map.of("name", "CPU", "max", 100),
+                        Map.of("name", "内存", "max", 100),
+                        Map.of("name", "稳定性", "max", 100),
+                        Map.of("name", "容量", "max", 100)
+                )
+        ));
+        option.put("series", List.of(Map.of(
+                "name", "健康评分",
+                "type", "radar",
+                "data", List.of(Map.of(
+                        "value", List.of(
+                                round1(toDouble(healthScores.get("cpuScore"))),
+                                round1(toDouble(healthScores.get("memScore"))),
+                                round1(toDouble(healthScores.get("stabilityScore"))),
+                                round1(toDouble(healthScores.get("capacityScore")))
+                        ),
+                        "name", "健康评分"
+                )),
+                "areaStyle", Map.of("color", "rgba(84,112,198,0.22)"),
+                "lineStyle", Map.of("color", "#5470C6", "width", 2),
+                "itemStyle", Map.of("color", "#5470C6")
+        )));
+        if (emptyHistory) {
+            option.put("graphic", noDataGraphic("样本较少，评分仅供参考"));
+        }
+        return option;
+    }
+
+    private Map<String, Object> baseCartesianOption(List<String> labels) {
+        Map<String, Object> option = new LinkedHashMap<>();
+        option.put("animation", true);
+        option.put("color", List.of("#5470C6", "#91CC75", "#EE6666", "#FAC858"));
+        option.put("tooltip", Map.of("trigger", "axis"));
+        option.put("legend", Map.of("top", 0));
+        option.put("grid", Map.of("left", "3%", "right", "4%", "bottom", "3%", "containLabel", true));
+        option.put("xAxis", Map.of(
+                "type", "category",
+                "boundaryGap", false,
+                "data", labels
+        ));
+        option.put("yAxis", Map.of(
+                "type", "value",
+                "min", 0,
+                "max", 100,
+                "axisLabel", Map.of("formatter", "{value}%")
+        ));
+        return option;
+    }
+
+    private Map<String, Object> lineSeries(String name, List<Double> data, String color, String areaColor) {
+        Map<String, Object> series = new LinkedHashMap<>();
+        series.put("name", name);
+        series.put("type", "line");
+        series.put("smooth", true);
+        series.put("showSymbol", false);
+        series.put("data", data);
+        series.put("lineStyle", Map.of("width", 2, "color", color));
+        series.put("itemStyle", Map.of("color", color));
+        series.put("areaStyle", Map.of("color", areaColor));
+        return series;
+    }
+
+    private Map<String, Object> barSeries(String name, List<Double> data, String color) {
+        Map<String, Object> series = new LinkedHashMap<>();
+        series.put("name", name);
+        series.put("type", "bar");
+        series.put("barMaxWidth", 26);
+        series.put("data", data);
+        series.put("itemStyle", Map.of("color", color, "borderRadius", List.of(4, 4, 0, 0)));
+        return series;
+    }
+
+    private Map<String, Object> noDataGraphic(String text) {
+        return Map.of(
+                "type", "text",
+                "left", "center",
+                "top", "middle",
+                "style", Map.of(
+                        "text", text,
+                        "fill", "#909399",
+                        "fontSize", 14
+                )
+        );
+    }
+
+    private String normalizeChartTemplate(String chartTemplate) {
+        String normalized = String.valueOf(chartTemplate).trim().toLowerCase();
+        return switch (normalized) {
+            case "cpu_mem_trend", "anomaly_timeline", "health_score_radar" -> normalized;
+            default -> "health_overview";
+        };
+    }
+
+    private String defaultChartTitle(String chartTemplate, String timeRange) {
+        String prefix = switch (chartTemplate) {
+            case "cpu_mem_trend" -> "CPU / 内存趋势图";
+            case "anomaly_timeline" -> "异常时序图";
+            case "health_score_radar" -> "健康评分雷达图";
+            default -> "服务器健康总览";
+        };
+        return prefix + "（" + (StringUtils.hasText(timeRange) ? timeRange : "1h") + "）";
     }
 
     private double scoreByUsage(double avg, double max) {

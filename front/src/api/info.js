@@ -30,6 +30,17 @@ export function selectInfo(params) {
   })
 }
 
+export function selectInfoById(id, username) {
+  return request({
+    url: '/info/selectInfo',
+    method: 'post',
+    data: {
+      id: String(id || ''),
+      username: username || getCurrentUsername()
+    }
+  })
+}
+
 export function insertProcess(data) {
   return request({
     url: '/info/insertProcess',

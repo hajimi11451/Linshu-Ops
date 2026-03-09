@@ -6,6 +6,7 @@ import com.example.backend.entity.UserLogin;
 import com.example.backend.mapper.ComponentConfigMapper;
 import com.example.backend.mapper.UserLoginMapper;
 import com.example.backend.utils.AiUtils;
+import com.example.backend.utils.InfoNormalizationUtils;
 import com.example.backend.utils.SshUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -287,12 +288,13 @@ public class DiagnosisService {
             com.example.backend.entity.Information info = new com.example.backend.entity.Information();
             info.setUserId(config.getUserId() != null ? config.getUserId() : DEFAULT_USER_ID);
             info.setServerIp(config.getServerIp());
-            info.setComponent(config.getComponent());
-            info.setErrorSummary("SSH连接失败：账号或密码错误");
-            info.setAnalysisResult("请检查服务器IP、SSH用户名和密码是否正确，确认服务器是否允许SSH连接。");
-            info.setSuggestedActions("请检查服务器IP、SSH用户名和密码是否正确，确认服务器是否允许SSH连接。");
+            String normalizedRiskLevel = InfoNormalizationUtils.normalizeRiskLevel("高");
+            info.setComponent(InfoNormalizationUtils.normalizeComponent(config.getComponent()));
+            info.setErrorSummary(InfoNormalizationUtils.normalizeText("SSH连接失败：账号或密码错误", "无"));
+            info.setAnalysisResult(InfoNormalizationUtils.normalizeText("请检查服务器IP、SSH用户名和密码是否正确，确认服务器是否允许SSH连接。", "无"));
+            info.setSuggestedActions(InfoNormalizationUtils.normalizeSuggestedActions("检查服务器IP、SSH用户名和密码是否正确；确认服务器是否允许SSH连接。", normalizedRiskLevel));
             info.setRawLog("SSH认证失败 - 服务器: " + config.getServerIp() + ", 用户名: " + config.getUsername());
-            info.setRiskLevel("High");
+            info.setRiskLevel(normalizedRiskLevel);
             info.setCreatedAt(java.time.LocalDateTime.now());
             informationMapper.insert(info);
             log.info("已创建SSH认证失败的Information记录: {} - {}", config.getServerIp(), config.getComponent());
@@ -332,7 +334,7 @@ public class DiagnosisService {
      */
     private boolean isAiExceptionResponse(String analysis) {
         if (!StringUtils.hasText(analysis)) return true;
-        String s = analysis.trim();
+        String s = sanitizeAiJson(analysis);
         if (s.contains("调用 AI 服务时发生异常") || s.contains("未能获取有效回答") || s.contains("AI 服务暂时不可用")) {
             return true;
         }
@@ -345,26 +347,55 @@ public class DiagnosisService {
         }
     }
 
+    private String sanitizeAiJson(String analysis) {
+        if (!StringUtils.hasText(analysis)) {
+            return "";
+        }
+        String sanitized = analysis
+                .replace("```json", "")
+                .replace("```JSON", "")
+                .replace("```", "")
+                .trim();
+        int start = sanitized.indexOf('{');
+        int end = sanitized.lastIndexOf('}');
+        if (start >= 0 && end > start) {
+            return sanitized.substring(start, end + 1);
+        }
+        return sanitized;
+    }
+
     /**
      * 解析 AI 返回的 JSON，将「遇到的问题」与「建议处理方式」分别写入 info。
      */
     private void parseAndSetAiResult(com.example.backend.entity.Information info, String analysisJson, Map<String, Object> result) {
         try {
-            JsonNode root = objectMapper.readTree(analysisJson);
+            JsonNode root = objectMapper.readTree(sanitizeAiJson(analysisJson));
             if (root != null && root.isObject()) {
-                info.setErrorSummary(root.has("errorSummary") ? root.get("errorSummary").asText("") : (String) result.get("summary"));
-                info.setAnalysisResult(root.has("analysisResult") ? root.get("analysisResult").asText("") : analysisJson);
-                info.setSuggestedActions(root.has("suggestedActions") ? root.get("suggestedActions").asText("") : "");
-                info.setRiskLevel(root.has("riskLevel") ? root.get("riskLevel").asText("高") : (String) result.get("riskLevel"));
+                String normalizedRiskLevel = InfoNormalizationUtils.normalizeRiskLevel(
+                        root.has("riskLevel") ? root.get("riskLevel").asText("") : String.valueOf(result.get("riskLevel"))
+                );
+                info.setComponent(InfoNormalizationUtils.normalizeComponent(root.has("component") ? root.get("component").asText("") : info.getComponent()));
+                info.setErrorSummary(InfoNormalizationUtils.normalizeText(
+                        root.has("errorSummary") ? root.get("errorSummary").asText("") : (String) result.get("summary"),
+                        "无"
+                ));
+                info.setAnalysisResult(InfoNormalizationUtils.normalizeText(
+                        root.has("analysisResult") ? root.get("analysisResult").asText("") : analysisJson,
+                        "无"
+                ));
+                info.setSuggestedActions(InfoNormalizationUtils.normalizeSuggestedActions(root.get("suggestedActions"), normalizedRiskLevel));
+                info.setRiskLevel(normalizedRiskLevel);
                 return;
             }
         } catch (Exception e) {
             log.warn("解析 AI 返回 JSON 失败，使用原始内容: {}", e.getMessage());
         }
-        info.setErrorSummary((String) result.get("summary"));
-        info.setAnalysisResult(analysisJson);
-        info.setSuggestedActions("");
-        info.setRiskLevel((String) result.get("riskLevel"));
+        String normalizedRiskLevel = InfoNormalizationUtils.normalizeRiskLevel(String.valueOf(result.get("riskLevel")));
+        info.setComponent(InfoNormalizationUtils.normalizeComponent(info.getComponent()));
+        info.setErrorSummary(InfoNormalizationUtils.normalizeText((String) result.get("summary"), "无"));
+        info.setAnalysisResult(InfoNormalizationUtils.normalizeText(analysisJson, "无"));
+        info.setSuggestedActions(InfoNormalizationUtils.normalizeSuggestedActions("", normalizedRiskLevel));
+        info.setRiskLevel(normalizedRiskLevel);
     }
 
     // --- 自动诊断 ---
@@ -387,12 +418,13 @@ public class DiagnosisService {
             com.example.backend.entity.Information info = new com.example.backend.entity.Information();
             info.setUserId(config.getUserId() != null ? config.getUserId() : DEFAULT_USER_ID);
             info.setServerIp(config.getServerIp());
-            info.setComponent(config.getComponent());
+            info.setComponent(InfoNormalizationUtils.normalizeComponent(config.getComponent()));
             if (aiException) {
-                info.setErrorSummary(AI_EXCEPTION_STORED_MESSAGE);
-                info.setAnalysisResult(AI_EXCEPTION_STORED_MESSAGE);
-                info.setSuggestedActions(AI_EXCEPTION_STORED_MESSAGE);
-                info.setRiskLevel("高");
+                String normalizedRiskLevel = InfoNormalizationUtils.normalizeRiskLevel("高");
+                info.setErrorSummary(InfoNormalizationUtils.normalizeText(AI_EXCEPTION_STORED_MESSAGE, "无"));
+                info.setAnalysisResult(InfoNormalizationUtils.normalizeText(AI_EXCEPTION_STORED_MESSAGE, "无"));
+                info.setSuggestedActions(InfoNormalizationUtils.normalizeSuggestedActions(AI_EXCEPTION_STORED_MESSAGE, normalizedRiskLevel));
+                info.setRiskLevel(normalizedRiskLevel);
             } else {
                 parseAndSetAiResult(info, analysis, result);
             }

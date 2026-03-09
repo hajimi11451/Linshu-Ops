@@ -5,6 +5,7 @@ import MainLayout from '../layouts/MainLayout.vue'
 import Dashboard from '../views/Dashboard.vue'
 import DiagnosisView from '../views/DiagnosisView.vue'
 import InfoListView from '../views/InfoListView.vue'
+import InfoDetailView from '../views/InfoDetailView.vue'
 import OpsAssistantView from '../views/OpsAssistantView.vue'
 
 const router = createRouter({
@@ -58,6 +59,14 @@ const router = createRouter({
           component: InfoListView,
           meta: {
             title: '全部信息与告警',
+          },
+        },
+        {
+          path: '/info-list/:id',
+          name: 'info-detail',
+          component: InfoDetailView,
+          meta: {
+            title: '告警详情',
           },
         },
       ],

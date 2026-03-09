@@ -4,6 +4,7 @@ import com.example.backend.utils.AiUtils;
 import com.example.backend.utils.SshUtils;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.Getter;
+import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -26,6 +27,15 @@ public class OpsAgentService {
 
     private static final int DEFAULT_AGENT_ROUNDS = 15;
     private static final long SSH_TIMEOUT_SECONDS = 60;
+    private static final String DEFAULT_CHART_RANGE = "1h";
+    private static final String DEFAULT_CHART_TEMPLATE = "health_overview";
+    private static final List<String> SUPPORTED_CHART_RANGES = Arrays.asList("30m", "1h", "2h");
+    private static final List<String> SUPPORTED_CHART_TEMPLATES = Arrays.asList(
+            "health_overview",
+            "cpu_mem_trend",
+            "anomaly_timeline",
+            "health_score_radar"
+    );
 
     // session -> stop flag
     private final ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicBoolean> stopFlags = new ConcurrentHashMap<>();
@@ -64,12 +74,43 @@ public class OpsAgentService {
         return flag != null && flag.get();
     }
 
+    @Getter
+    @Setter
+    public static class AgentRunResult {
+        private String finalSummary;
+        private boolean chartSuggest;
+        private String chartReason;
+        private String chartTimeRange;
+        private String chartTemplate;
+        private String chartTitle;
+
+        public static AgentRunResult defaults() {
+            AgentRunResult result = new AgentRunResult();
+            result.setFinalSummary("");
+            result.setChartSuggest(false);
+            result.setChartReason("无需图表");
+            result.setChartTimeRange(DEFAULT_CHART_RANGE);
+            result.setChartTemplate(DEFAULT_CHART_TEMPLATE);
+            result.setChartTitle(defaultChartTitle(DEFAULT_CHART_TEMPLATE, DEFAULT_CHART_RANGE));
+            return result;
+        }
+    }
+
     public String runAgentLoop(String userQuery,
                                String serverIp,
                                String username,
                                String password,
                                WebSocketSession session) {
-        return runAgentLoop(userQuery, serverIp, username, password, DEFAULT_AGENT_ROUNDS, null, session);
+        return runAgentLoopWithAdvice(userQuery, serverIp, username, password, DEFAULT_AGENT_ROUNDS, null, session)
+                .getFinalSummary();
+    }
+
+    public AgentRunResult runAgentLoopWithAdvice(String userQuery,
+                                                 String serverIp,
+                                                 String username,
+                                                 String password,
+                                                 WebSocketSession session) {
+        return runAgentLoopWithAdvice(userQuery, serverIp, username, password, DEFAULT_AGENT_ROUNDS, null, session);
     }
 
     /**
@@ -83,7 +124,18 @@ public class OpsAgentService {
                                int maxRounds,
                                String approvedRiskCommand,
                                WebSocketSession session) {
-        return runAgentLoop(userQuery, serverIp, username, password, maxRounds, approvedRiskCommand, session, new ArrayList<>());
+        return runAgentLoopWithAdvice(userQuery, serverIp, username, password, maxRounds, approvedRiskCommand, session)
+                .getFinalSummary();
+    }
+
+    public AgentRunResult runAgentLoopWithAdvice(String userQuery,
+                                                 String serverIp,
+                                                 String username,
+                                                 String password,
+                                                 int maxRounds,
+                                                 String approvedRiskCommand,
+                                                 WebSocketSession session) {
+        return runAgentLoopWithAdvice(userQuery, serverIp, username, password, maxRounds, approvedRiskCommand, session, new ArrayList<>());
     }
 
     public String runAgentLoop(String userQuery,
@@ -94,10 +146,23 @@ public class OpsAgentService {
                                String approvedRiskCommand,
                                WebSocketSession session,
                                List<Map<String, Object>> existingHistory) {
+        return runAgentLoopWithAdvice(userQuery, serverIp, username, password, maxRounds, approvedRiskCommand, session, existingHistory)
+                .getFinalSummary();
+    }
+
+    public AgentRunResult runAgentLoopWithAdvice(String userQuery,
+                                                 String serverIp,
+                                                 String username,
+                                                 String password,
+                                                 int maxRounds,
+                                                 String approvedRiskCommand,
+                                                 WebSocketSession session,
+                                                 List<Map<String, Object>> existingHistory) {
         long start = System.currentTimeMillis();
-        String finalSummary = "";
+        AgentRunResult finalResult = AgentRunResult.defaults();
         String sessionId = session.getId();
-        
+        boolean metricsRequested = false;
+
         // 如果是首次运行（不是继续执行），则初始化停止标志
         // 如果是继续执行，需要保留之前的停止标志状态，或者重新初始化为 false
         // 这里选择重新初始化，确保每次 runAgentLoop 开始时都是可运行状态
@@ -127,19 +192,19 @@ public class OpsAgentService {
 
         for (int round = 1; round <= maxRounds; round++) {
             if (shouldStop(sessionId)) {
-                finalSummary = "任务已被用户强制停止。";
-                sendProgress(session, "agent_stop", finalSummary, System.currentTimeMillis() - start);
-                return finalSummary;
+                finalResult.setFinalSummary("任务已被用户强制停止。");
+                sendProgress(session, "agent_stop", finalResult.getFinalSummary(), System.currentTimeMillis() - start);
+                return finalResult;
             }
 
             sendProgress(session, "agent_think", "第 " + round + " 轮：AI 正在决策下一步", System.currentTimeMillis() - start);
 
             Map<String, Object> aiResp = aiUtils.callQianfanApiWithTools(messages, tools);
-            
+
             if (shouldStop(sessionId)) {
-                finalSummary = "任务已被用户强制停止。";
-                sendProgress(session, "agent_stop", finalSummary, System.currentTimeMillis() - start);
-                return finalSummary;
+                finalResult.setFinalSummary("任务已被用户强制停止。");
+                sendProgress(session, "agent_stop", finalResult.getFinalSummary(), System.currentTimeMillis() - start);
+                return finalResult;
             }
 
             @SuppressWarnings("unchecked")
@@ -169,12 +234,12 @@ public class OpsAgentService {
                 continue;
             }
 
-            boolean shouldStop = false;
+            boolean shouldBreak = false;
             for (Map<String, Object> toolCall : toolCalls) {
                 if (shouldStop(sessionId)) {
-                    finalSummary = "任务已被用户强制停止。";
-                    sendProgress(session, "agent_stop", finalSummary, System.currentTimeMillis() - start);
-                    return finalSummary;
+                    finalResult.setFinalSummary("任务已被用户强制停止。");
+                    sendProgress(session, "agent_stop", finalResult.getFinalSummary(), System.currentTimeMillis() - start);
+                    return finalResult;
                 }
 
                 String toolCallId = String.valueOf(toolCall.getOrDefault("id", ""));
@@ -183,10 +248,7 @@ public class OpsAgentService {
                 Map<String, Object> args = (Map<String, Object>) toolCall.getOrDefault("arguments", new HashMap<>());
 
                 if ("finish_task".equals(toolName)) {
-                    finalSummary = String.valueOf(args.getOrDefault("final_summary", assistantContent));
-                    if (!StringUtils.hasText(finalSummary)) {
-                        finalSummary = "任务已结束。";
-                    }
+                    fillFinalResult(finalResult, args, assistantContent, metricsRequested);
 
                     Map<String, Object> toolMsg = new LinkedHashMap<>();
                     toolMsg.put("role", "tool");
@@ -195,8 +257,8 @@ public class OpsAgentService {
                     toolMsg.put("content", "任务已由 Agent 标记完成。");
                     messages.add(toolMsg);
 
-                    sendProgress(session, "agent_finish", finalSummary, System.currentTimeMillis() - start);
-                    shouldStop = true;
+                    sendProgress(session, "agent_finish", finalResult.getFinalSummary(), System.currentTimeMillis() - start);
+                    shouldBreak = true;
                     break;
                 }
 
@@ -242,6 +304,7 @@ public class OpsAgentService {
                 }
 
                 if ("get_server_metrics".equals(toolName)) {
+                    metricsRequested = true;
                     String targetIp = String.valueOf(args.getOrDefault("serverIp", serverIp)).trim();
                     String timeRange = String.valueOf(args.getOrDefault("timeRange", "30m")).trim();
                     if (!StringUtils.hasText(targetIp)) {
@@ -285,25 +348,112 @@ public class OpsAgentService {
                 }
             }
 
-            if (shouldStop) {
+            if (shouldBreak) {
                 break;
             }
         }
 
-        if (!StringUtils.hasText(finalSummary)) {
+        if (!StringUtils.hasText(finalResult.getFinalSummary())) {
             if (shouldStop(sessionId)) {
-                finalSummary = "任务已被用户强制停止。";
-                sendProgress(session, "agent_stop", finalSummary, System.currentTimeMillis() - start);
+                finalResult.setFinalSummary("任务已被用户强制停止。");
+                sendProgress(session, "agent_stop", finalResult.getFinalSummary(), System.currentTimeMillis() - start);
             } else {
-                finalSummary = "达到最大循环轮次(" + maxRounds + ")，任务未显式 finish_task，已强制结束。";
+                finalResult.setFinalSummary("达到最大循环轮次(" + maxRounds + ")，任务未显式 finish_task，已强制结束。");
                 // 抛出超时异常，携带历史记录以便后续恢复
-                throw new AgentTimeoutException(finalSummary, messages);
+                throw new AgentTimeoutException(finalResult.getFinalSummary(), messages);
             }
         }
-        return finalSummary;
+        return finalResult;
         } finally {
             stopFlags.remove(sessionId);
         }
+    }
+
+    private void fillFinalResult(AgentRunResult finalResult,
+                                 Map<String, Object> args,
+                                 String assistantContent,
+                                 boolean metricsRequested) {
+        String summary = String.valueOf(args.getOrDefault("final_summary", assistantContent));
+        if (!StringUtils.hasText(summary)) {
+            summary = "任务已结束。";
+        }
+        finalResult.setFinalSummary(summary);
+
+        boolean chartSuggest = args.containsKey("chart_suggest")
+                ? toBoolean(args.get("chart_suggest"))
+                : metricsRequested && containsChartSignal(summary);
+
+        String chartTemplate = normalizeChartTemplate(String.valueOf(args.getOrDefault("chart_template", DEFAULT_CHART_TEMPLATE)));
+        String chartTimeRange = normalizeChartTimeRange(String.valueOf(args.getOrDefault("chart_time_range", DEFAULT_CHART_RANGE)));
+        String chartReason = String.valueOf(args.getOrDefault("chart_reason", ""));
+        String chartTitle = String.valueOf(args.getOrDefault("chart_title", ""));
+
+        if (!StringUtils.hasText(chartReason)) {
+            chartReason = chartSuggest ? "结果包含趋势、峰值或异常信息，适合补充图表展示。" : "文本总结已足够表达处理结果，无需额外图表。";
+        }
+        if (!StringUtils.hasText(chartTitle)) {
+            chartTitle = defaultChartTitle(chartTemplate, chartTimeRange);
+        }
+
+        finalResult.setChartSuggest(chartSuggest);
+        finalResult.setChartReason(chartReason);
+        finalResult.setChartTimeRange(chartTimeRange);
+        finalResult.setChartTemplate(chartTemplate);
+        finalResult.setChartTitle(chartTitle);
+    }
+
+    private boolean toBoolean(Object value) {
+        if (value instanceof Boolean bool) {
+            return bool;
+        }
+        return "true".equalsIgnoreCase(String.valueOf(value));
+    }
+
+    private boolean containsChartSignal(String text) {
+        String content = String.valueOf(text).toLowerCase();
+        return content.contains("cpu")
+                || content.contains("内存")
+                || content.contains("负载")
+                || content.contains("趋势")
+                || content.contains("波动")
+                || content.contains("峰值")
+                || content.contains("异常")
+                || content.contains("监控");
+    }
+
+    private String normalizeChartTimeRange(String timeRange) {
+        if (!StringUtils.hasText(timeRange)) {
+            return DEFAULT_CHART_RANGE;
+        }
+        String normalized = timeRange.trim().toLowerCase();
+        return SUPPORTED_CHART_RANGES.contains(normalized) ? normalized : DEFAULT_CHART_RANGE;
+    }
+
+    private String normalizeChartTemplate(String chartTemplate) {
+        if (!StringUtils.hasText(chartTemplate)) {
+            return DEFAULT_CHART_TEMPLATE;
+        }
+        String normalized = chartTemplate.trim().toLowerCase();
+        return SUPPORTED_CHART_TEMPLATES.contains(normalized) ? normalized : DEFAULT_CHART_TEMPLATE;
+    }
+
+    private static String defaultChartTitle(String chartTemplate, String timeRange) {
+        String prefix;
+        switch (chartTemplate) {
+            case "cpu_mem_trend":
+                prefix = "CPU / 内存趋势图";
+                break;
+            case "anomaly_timeline":
+                prefix = "异常时序图";
+                break;
+            case "health_score_radar":
+                prefix = "健康评分雷达图";
+                break;
+            default:
+                prefix = "服务器健康总览";
+                break;
+        }
+        return prefix + "（" + (StringUtils.hasText(timeRange) ? timeRange : DEFAULT_CHART_RANGE) + "）";
     }
 
     public SshUtils.SshResult executeApprovedRiskCommand(String serverIp,
@@ -329,9 +479,11 @@ public class OpsAgentService {
                         + "1) 所有可执行动作必须通过工具 execute_command，不要假装执行。\n"
                         + "2) 包管理命令必须是非交互式：apt/yum/dnf 等要加 -y 或等价非交互参数。\n"
                         + "3) 遇到错误要基于错误信息自动修复并继续，不要立即放弃。\n"
-                        + "4) 最终完成任务时必须调用 finish_task，并在 final_summary 给出结果总结。\n"
+                        + "4) 最终完成任务时必须调用 finish_task，并一次性给出 final_summary、chart_suggest、chart_reason、chart_time_range、chart_template、chart_title。\n"
                         + "5) 每轮只做必要动作，优先先检查再变更，避免危险命令。\n"
-                        + "6) 如果你需要分析服务器状态，请先调用 get_server_metrics 获取真实数据，然后基于真实数据给出专业的运维分析报告。");
+                        + "6) 如果你需要分析服务器状态，请先调用 get_server_metrics 获取真实数据，然后基于真实数据给出专业的运维分析报告。\n"
+                        + "7) 只有当真实数据中存在趋势、峰值、波动、异常或评分对比价值时，才将 chart_suggest 设为 true；否则设为 false。\n"
+                        + "8) chart_template 只能是 health_overview、cpu_mem_trend、anomaly_timeline、health_score_radar 之一；chart_time_range 只能是 30m、1h、2h 之一。");
         return msg;
     }
 
@@ -359,12 +511,34 @@ public class OpsAgentService {
         finishProps.put("final_summary", Map.of(
                 "type", "string",
                 "description", "任务完成后的最终总结"));
+        finishProps.put("chart_suggest", Map.of(
+                "type", "boolean",
+                "description", "是否建议前端再请求生成图表"));
+        finishProps.put("chart_reason", Map.of(
+                "type", "string",
+                "description", "建议或不建议生成图表的原因"));
+        finishProps.put("chart_time_range", Map.of(
+                "type", "string",
+                "description", "推荐图表时间范围，只能是 30m、1h、2h"));
+        finishProps.put("chart_template", Map.of(
+                "type", "string",
+                "description", "推荐图表模板，只能是 health_overview、cpu_mem_trend、anomaly_timeline、health_score_radar"));
+        finishProps.put("chart_title", Map.of(
+                "type", "string",
+                "description", "推荐图表标题"));
         finishParams.put("properties", finishProps);
-        finishParams.put("required", List.of("final_summary"));
+        finishParams.put("required", List.of(
+                "final_summary",
+                "chart_suggest",
+                "chart_reason",
+                "chart_time_range",
+                "chart_template",
+                "chart_title"
+        ));
 
         Map<String, Object> finishFn = new LinkedHashMap<>();
         finishFn.put("name", "finish_task");
-        finishFn.put("description", "任务完成时调用，标记循环结束。");
+        finishFn.put("description", "任务完成时调用，标记循环结束，并同步返回图表建议。\n只有在图表确有展示价值时才将 chart_suggest 设为 true。");
         finishFn.put("parameters", finishParams);
         tools.add(Map.of("type", "function", "function", finishFn));
 

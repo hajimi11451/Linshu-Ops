@@ -44,6 +44,15 @@ public class DiagnosisService {
     /** AI 判断异常时写入数据库的固定文案 */
     private static final String AI_EXCEPTION_STORED_MESSAGE = "上报管理员，ai判断运行异常";
 
+    /** SSH / 日志读取失败时写入数据库的固定摘要 */
+    private static final String SSH_FETCH_FAILURE_SUMMARY = "日志获取失败";
+
+    private static final String SYSTEM_MONITOR_COMPONENT = "系统监控";
+
+    private static final String SYSTEM_MONITOR_CONFIG_KEY = "system_monitor";
+
+    private static final String SYSTEM_MONITOR_CONFIG_VALUE = "仅监控CPU和内存";
+
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
     @Autowired
@@ -60,6 +69,9 @@ public class DiagnosisService {
 
     @Autowired
     private SshUtils sshUtils;
+
+    @Autowired
+    private MonitorService monitorService;
 
     private Long resolveUserIdFromAppUsername(String appUsername) {
         if (!StringUtils.hasText(appUsername)) {
@@ -163,18 +175,59 @@ public class DiagnosisService {
         } else {
             rawLog = sshUtils.exec(serverIp, "tail -n 50 " + logPath);
         }
+
+        String normalizedRawLog = InfoNormalizationUtils.normalizeText(rawLog, "");
+        if (isSshOrLogFetchFailure(normalizedRawLog)) {
+            Map<String, Object> fetchFailureResult = new HashMap<>();
+            fetchFailureResult.put("rawLog", InfoNormalizationUtils.normalizeText(normalizedRawLog, "无"));
+            fetchFailureResult.put("analysis", "");
+            fetchFailureResult.put("summary", SSH_FETCH_FAILURE_SUMMARY);
+            fetchFailureResult.put("riskLevel", "高");
+            fetchFailureResult.put("noLogData", false);
+            fetchFailureResult.put("fetchFailure", true);
+            return fetchFailureResult;
+        }
+        if (!StringUtils.hasText(normalizedRawLog)) {
+            Map<String, Object> emptyResult = new HashMap<>();
+            emptyResult.put("rawLog", "无");
+            emptyResult.put("analysis", "");
+            emptyResult.put("summary", "无");
+            emptyResult.put("riskLevel", "无");
+            emptyResult.put("noLogData", true);
+            emptyResult.put("fetchFailure", false);
+            return emptyResult;
+        }
         
         // 2. 调用 AI 分析日志
-        String analysisJson = aiUtils.analyzeLog(rawLog);
+        String analysisJson = aiUtils.analyzeLog(normalizedRawLog);
         
         // 3. 组装结果
         Map<String, Object> result = new HashMap<>();
-        result.put("rawLog", rawLog);
+        result.put("rawLog", normalizedRawLog);
         result.put("analysis", analysisJson);
         result.put("summary", "发现 " + component + " 运行异常");
         result.put("riskLevel", "高");
+        result.put("noLogData", false);
+        result.put("fetchFailure", false);
         
         return result;
+    }
+
+    private boolean isSshOrLogFetchFailure(String rawLog) {
+        if (!StringUtils.hasText(rawLog)) {
+            return false;
+        }
+
+        String value = rawLog.trim();
+        return value.startsWith("SSH Error:")
+                || value.startsWith("Command failed with exit code")
+                || value.contains("No such file")
+                || value.contains("cannot open")
+                || value.contains("Permission denied")
+                || value.contains("Read timed out")
+                || value.contains("Connection timed out")
+                || value.contains("Connection refused")
+                || value.contains("Auth fail");
     }
 
     private String extractPathFromCommand(String command) {
@@ -313,7 +366,9 @@ public class DiagnosisService {
     }
 
     public List<ComponentConfig> listAllConfigsForAutoTask() {
-        return componentConfigMapper.selectList(new LambdaQueryWrapper<>());
+        List<ComponentConfig> list = componentConfigMapper.selectList(new LambdaQueryWrapper<>());
+        list.removeIf(config -> SYSTEM_MONITOR_CONFIG_KEY.equalsIgnoreCase(String.valueOf(config.getConfigKey())));
+        return list;
     }
 
     public void deleteConfig(Long id, String appUsername) {
@@ -333,18 +388,101 @@ public class DiagnosisService {
      * 若为异常文案，入库时应改为固定提示“上报管理员，ai判断运行异常”。
      */
     private boolean isAiExceptionResponse(String analysis) {
-        if (!StringUtils.hasText(analysis)) return true;
+        if (!StringUtils.hasText(analysis)) {
+            return true;
+        }
         String s = sanitizeAiJson(analysis);
-        if (s.contains("调用 AI 服务时发生异常") || s.contains("未能获取有效回答") || s.contains("AI 服务暂时不可用")) {
+        if (isExplicitAiFailureText(s)) {
             return true;
         }
         try {
             JsonNode root = objectMapper.readTree(s);
-            if (root == null || !root.isObject()) return true;
-            return !root.has("component") || !root.has("errorSummary") || !root.has("analysisResult") || !root.has("riskLevel");
+            if (root == null || !root.isObject()) {
+                return false;
+            }
+
+            boolean hasMeaningfulFields = root.has("errorSummary") || root.has("analysisResult") || root.has("riskLevel");
+            if (!hasMeaningfulFields) {
+                return true;
+            }
+
+            return false;
         } catch (Exception e) {
+            return false;
+        }
+    }
+
+    public Map<String, Object> addServerMonitor(ComponentConfig config) {
+        Long resolvedUserId = resolveUserIdFromAppUsername(config.getAppUsername());
+        if (resolvedUserId != null) {
+            config.setUserId(resolvedUserId);
+        } else if (config.getUserId() == null) {
+            throw new RuntimeException("未识别登录用户，无法保存服务器监控");
+        }
+
+        String serverIp = config.getServerIp();
+        String username = config.getUsername();
+        String password = config.getPassword();
+
+        if (!StringUtils.hasText(serverIp)) {
+            throw new RuntimeException("服务器 IP 不能为空");
+        }
+        if (!StringUtils.hasText(username) || !StringUtils.hasText(password)) {
+            throw new RuntimeException("添加服务器监控时必须填写 SSH 用户名和密码");
+        }
+
+        config.setComponent(SYSTEM_MONITOR_COMPONENT);
+        config.setConfigKey(SYSTEM_MONITOR_CONFIG_KEY);
+        config.setConfigValue(SYSTEM_MONITOR_CONFIG_VALUE);
+
+        log.info("保存服务器监控配置：开始执行 SSH 连接验证 - {}@{}", username, serverIp);
+
+        boolean connected = sshUtils.testConnection(serverIp, username, password);
+        if (!connected) {
+            log.warn("服务器监控 SSH 连接失败，创建Information记录: {}@{}", username, serverIp);
+            createSshAuthFailureInfo(config);
+            throw new RuntimeException("SSH连接失败：账号或密码错误，请检查后重试");
+        }
+
+        ComponentConfig existing = componentConfigMapper.selectOne(
+                new LambdaQueryWrapper<ComponentConfig>()
+                        .eq(ComponentConfig::getUserId, config.getUserId())
+                        .eq(ComponentConfig::getServerIp, serverIp)
+                        .eq(ComponentConfig::getConfigKey, SYSTEM_MONITOR_CONFIG_KEY)
+        );
+
+        if (existing != null) {
+            existing.setUsername(username);
+            existing.setPassword(password);
+            existing.setComponent(SYSTEM_MONITOR_COMPONENT);
+            existing.setConfigValue(SYSTEM_MONITOR_CONFIG_VALUE);
+            existing.setIsVerified(1);
+            existing.setUpdatedAt(java.time.LocalDateTime.now());
+            componentConfigMapper.updateById(existing);
+        } else {
+            config.setIsVerified(1);
+            config.setUpdatedAt(java.time.LocalDateTime.now());
+            componentConfigMapper.insert(config);
+        }
+
+        Map<String, Object> sampleResult = monitorService.sampleMetricsOnce(serverIp, username, password);
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("serverIp", serverIp);
+        result.put("component", SYSTEM_MONITOR_COMPONENT);
+        result.put("sample", sampleResult);
+        return result;
+    }
+
+    private boolean isExplicitAiFailureText(String analysis) {
+        if (!StringUtils.hasText(analysis)) {
             return true;
         }
+
+        return analysis.contains("调用 AI 服务时发生异常")
+                || analysis.contains("未能获取有效回答")
+                || analysis.contains("AI 服务暂时不可用")
+                || analysis.contains("AI 服务连接中断或超时");
     }
 
     private String sanitizeAiJson(String analysis) {
@@ -367,14 +505,17 @@ public class DiagnosisService {
     /**
      * 解析 AI 返回的 JSON，将「遇到的问题」与「建议处理方式」分别写入 info。
      */
-    private void parseAndSetAiResult(com.example.backend.entity.Information info, String analysisJson, Map<String, Object> result) {
+    private void parseAndSetAiResult(com.example.backend.entity.Information info,
+                                     String analysisJson,
+                                     Map<String, Object> result,
+                                     String configuredComponent) {
         try {
             JsonNode root = objectMapper.readTree(sanitizeAiJson(analysisJson));
             if (root != null && root.isObject()) {
                 String normalizedRiskLevel = InfoNormalizationUtils.normalizeRiskLevel(
                         root.has("riskLevel") ? root.get("riskLevel").asText("") : String.valueOf(result.get("riskLevel"))
                 );
-                info.setComponent(InfoNormalizationUtils.normalizeComponent(root.has("component") ? root.get("component").asText("") : info.getComponent()));
+                info.setComponent(InfoNormalizationUtils.normalizeComponent(configuredComponent));
                 info.setErrorSummary(InfoNormalizationUtils.normalizeText(
                         root.has("errorSummary") ? root.get("errorSummary").asText("") : (String) result.get("summary"),
                         "无"
@@ -391,7 +532,7 @@ public class DiagnosisService {
             log.warn("解析 AI 返回 JSON 失败，使用原始内容: {}", e.getMessage());
         }
         String normalizedRiskLevel = InfoNormalizationUtils.normalizeRiskLevel(String.valueOf(result.get("riskLevel")));
-        info.setComponent(InfoNormalizationUtils.normalizeComponent(info.getComponent()));
+        info.setComponent(InfoNormalizationUtils.normalizeComponent(configuredComponent));
         info.setErrorSummary(InfoNormalizationUtils.normalizeText((String) result.get("summary"), "无"));
         info.setAnalysisResult(InfoNormalizationUtils.normalizeText(analysisJson, "无"));
         info.setSuggestedActions(InfoNormalizationUtils.normalizeSuggestedActions("", normalizedRiskLevel));
@@ -412,6 +553,8 @@ public class DiagnosisService {
             Map<String, Object> result = executeDiagnosis(config.getServerIp(), config.getComponent(), logPath, config.getUsername(), config.getPassword());
             
             String analysis = (String) result.get("analysis");
+            boolean noLogData = Boolean.TRUE.equals(result.get("noLogData"));
+            boolean fetchFailure = Boolean.TRUE.equals(result.get("fetchFailure"));
             boolean aiException = isAiExceptionResponse(analysis);
             
             // 3. 保存结果到 Information 表（需设置 userId 否则插入失败）
@@ -419,16 +562,31 @@ public class DiagnosisService {
             info.setUserId(config.getUserId() != null ? config.getUserId() : DEFAULT_USER_ID);
             info.setServerIp(config.getServerIp());
             info.setComponent(InfoNormalizationUtils.normalizeComponent(config.getComponent()));
-            if (aiException) {
+            if (fetchFailure) {
+                String normalizedRiskLevel = InfoNormalizationUtils.normalizeRiskLevel(String.valueOf(result.get("riskLevel")));
+                info.setErrorSummary(InfoNormalizationUtils.normalizeText((String) result.get("summary"), SSH_FETCH_FAILURE_SUMMARY));
+                info.setAnalysisResult(InfoNormalizationUtils.normalizeText((String) result.get("rawLog"), SSH_FETCH_FAILURE_SUMMARY));
+                info.setSuggestedActions(InfoNormalizationUtils.normalizeSuggestedActions(
+                        "检查目标服务器 SSH 连通性、账号密码、端口和日志路径权限；确认日志文件存在且可读。",
+                        normalizedRiskLevel
+                ));
+                info.setRiskLevel(normalizedRiskLevel);
+            } else if (noLogData) {
+                String normalizedRiskLevel = InfoNormalizationUtils.normalizeRiskLevel("无");
+                info.setErrorSummary(InfoNormalizationUtils.normalizeText("无", "无"));
+                info.setAnalysisResult(InfoNormalizationUtils.normalizeText("无", "无"));
+                info.setSuggestedActions(InfoNormalizationUtils.normalizeSuggestedActions("", normalizedRiskLevel));
+                info.setRiskLevel(normalizedRiskLevel);
+            } else if (aiException) {
                 String normalizedRiskLevel = InfoNormalizationUtils.normalizeRiskLevel("高");
                 info.setErrorSummary(InfoNormalizationUtils.normalizeText(AI_EXCEPTION_STORED_MESSAGE, "无"));
                 info.setAnalysisResult(InfoNormalizationUtils.normalizeText(AI_EXCEPTION_STORED_MESSAGE, "无"));
                 info.setSuggestedActions(InfoNormalizationUtils.normalizeSuggestedActions(AI_EXCEPTION_STORED_MESSAGE, normalizedRiskLevel));
                 info.setRiskLevel(normalizedRiskLevel);
             } else {
-                parseAndSetAiResult(info, analysis, result);
+                parseAndSetAiResult(info, analysis, result, config.getComponent());
             }
-            info.setRawLog((String) result.get("rawLog"));
+            info.setRawLog(InfoNormalizationUtils.normalizeText((String) result.get("rawLog"), "无"));
             info.setCreatedAt(java.time.LocalDateTime.now());
             
             informationMapper.insert(info);

@@ -1,390 +1,623 @@
 <template>
-  <div>
-    <!-- 统计卡片区 -->
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-      <!-- 系统健康度 -->
-      <el-card
-        class="bg-ui-card rounded-lg shadow-sm border border-ui-border hover:shadow-md transition"
-        :body-style="{ padding: '24px' }"
-      >
-        <div class="flex justify-between items-start">
-          <div>
-            <p class="text-xs font-medium text-ui-subtext uppercase tracking-wider">系统健康度</p>
-            <h3
-              class="text-3xl font-bold mt-1"
-              :class="healthScore >= 80 ? 'text-ui-success' : (healthScore >= 60 ? 'text-ui-warning' : 'text-ui-error')"
-            >
-              {{ healthScore }}<span class="text-lg ml-1">分</span>
-            </h3>
-          </div>
-          <div
-            class="p-2 rounded-lg"
-            :class="healthScore >= 80 ? 'bg-green-50' : (healthScore >= 60 ? 'bg-orange-50' : 'bg-red-50')"
-          >
-            <svg
-              class="w-6 h-6"
-              :class="healthScore >= 80 ? 'text-ui-success' : (healthScore >= 60 ? 'text-ui-warning' : 'text-ui-error')"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-              />
-            </svg>
-          </div>
-        </div>
-      </el-card>
+  <div class="h-full min-h-0">
+    <div
+      ref="pagerRef"
+      class="dashboard-pager h-full min-h-0"
+      tabindex="0"
+      @scroll.passive="handlePagerScroll"
+      @keydown.left.prevent="switchPage(-1)"
+      @keydown.right.prevent="switchPage(1)"
+    >
+      <section class="dashboard-page">
+        <div class="dashboard-page-shell h-full" :style="getPageMotionStyle(0)">
+          <div class="flex h-full min-h-0 flex-col overflow-y-auto bg-ui-bg p-6 lg:p-8 custom-scrollbar">
+            <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <div class="rounded-[24px] border border-ui-border bg-gradient-to-br from-white to-slate-50 p-5 shadow-sm">
+                <div class="text-xs uppercase tracking-[0.22em] text-ui-subtext">监控服务器</div>
+                <div class="mt-3 text-3xl font-bold text-ui-text">{{ dashboardStats.total }}</div>
+                <p class="mt-2 text-sm text-ui-subtext">当前已接入 {{ dashboardStats.total }} 台服务器监控</p>
+              </div>
 
-      <!-- 活跃告警 -->
-      <el-card
-        class="bg-ui-card rounded-lg shadow-sm border border-ui-border hover:shadow-md transition"
-        :body-style="{ padding: '24px' }"
-      >
-        <div class="flex justify-between items-start">
-          <div>
-            <p class="text-xs font-medium text-ui-subtext uppercase tracking-wider">活跃告警</p>
-            <h3 class="text-3xl font-bold text-ui-warning mt-1">{{ activeAlertCount }}</h3>
-          </div>
-          <div class="p-2 bg-orange-50 rounded-lg">
-            <svg
-              class="w-6 h-6 text-ui-warning"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-              />
-            </svg>
-          </div>
-        </div>
-      </el-card>
+              <div class="rounded-[24px] border border-ui-border bg-gradient-to-br from-white to-green-50 p-5 shadow-sm">
+                <div class="text-xs uppercase tracking-[0.22em] text-ui-subtext">健康服务器</div>
+                <div class="mt-3 text-3xl font-bold text-ui-success">{{ dashboardStats.success }}</div>
+                <p class="mt-2 text-sm text-ui-subtext">CPU 与内存均处于稳定区间</p>
+              </div>
 
-      <!-- 总日志数 -->
-      <el-card
-        class="bg-ui-card rounded-lg shadow-sm border border-ui-border hover:shadow-md transition"
-        :body-style="{ padding: '24px' }"
-      >
-        <div class="flex justify-between items-start">
-          <div>
-            <p class="text-xs font-medium text-ui-subtext uppercase tracking-wider">已分析日志</p>
-            <h3 class="text-3xl font-bold text-brand mt-1">{{ totalLogsCount }}</h3>
-          </div>
-          <div class="p-2 bg-blue-50 rounded-lg">
-            <svg
-              class="w-6 h-6 text-brand"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-              />
-            </svg>
-          </div>
-        </div>
-      </el-card>
+              <div class="rounded-[24px] border border-ui-border bg-gradient-to-br from-white to-orange-50 p-5 shadow-sm">
+                <div class="text-xs uppercase tracking-[0.22em] text-ui-subtext">关注中</div>
+                <div class="mt-3 text-3xl font-bold text-ui-warning">{{ dashboardStats.warning }}</div>
+                <p class="mt-2 text-sm text-ui-subtext">单项资源偏高，建议持续观察</p>
+              </div>
 
-      <!-- 高危事件 -->
-      <el-card
-        class="bg-ui-card rounded-lg shadow-sm border border-ui-border hover:shadow-md transition"
-        :body-style="{ padding: '24px' }"
-      >
-        <div class="flex justify-between items-start">
-          <div>
-            <p class="text-xs font-medium text-ui-subtext uppercase tracking-wider">高危事件</p>
-            <h3 class="text-3xl font-bold text-ui-error mt-1">{{ highRiskCount }}</h3>
-          </div>
-          <div class="p-2 bg-red-50 rounded-lg">
-            <svg
-              class="w-6 h-6 text-ui-error"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M13 10V3L4 14h7v7l9-11h-7z"
-              />
-            </svg>
-          </div>
-        </div>
-      </el-card>
-    </div>
+              <div class="rounded-[24px] border border-ui-border bg-gradient-to-br from-white to-red-50 p-5 shadow-sm">
+                <div class="text-xs uppercase tracking-[0.22em] text-ui-subtext">平均健康度</div>
+                <div class="mt-3 text-3xl font-bold" :class="averageScoreTone.text">{{ dashboardStats.averageScore }}%</div>
+                <p class="mt-2 text-sm text-ui-subtext">最近刷新：{{ lastUpdatedLabel }}</p>
+              </div>
+            </div>
 
-    <!-- 图表 + 最新告警区 -->
-    <div class="flex flex-col lg:flex-row gap-6">
-      <!-- 服务器监控控制台 -->
-      <el-card
-        class="w-full lg:w-2/3 bg-ui-card rounded-lg shadow-sm border border-ui-border"
-        :body-style="{ padding: '24px' }"
-      >
-        <div class="flex justify-between items-center mb-6">
-          <div class="flex items-center space-x-4">
-            <h3 class="text-lg font-bold text-ui-text">服务器监控控制台</h3>
-            <el-select 
-              v-if="serverList.length > 0" 
-              v-model="selectedServer" 
-              size="small" 
-              @change="handleServerChange" 
-              placeholder="选择服务器" 
-              class="w-40"
-            >
-              <el-option v-for="ip in serverList" :key="ip" :label="ip" :value="ip" />
-            </el-select>
-            <span v-else-if="loadingMonitor" class="text-xs text-gray-400">正在搜索服务器...</span>
-            <span v-else class="text-xs text-gray-400">未找到服务器</span>
-          </div>
-          <div class="flex space-x-2">
-            <span class="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-blue-50 text-brand">
-              CPU: {{ currentInfo.cpuUsage || 0 }}%
-            </span>
-            <span class="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-green-50 text-ui-success">
-              Mem: {{ currentInfo.memUsage || 0 }}%
-            </span>
-          </div>
-        </div>
-        
-        <!-- 实时信息展示区域 -->
-        <div class="grid grid-cols-2 gap-4 mb-4 text-sm text-gray-600 bg-gray-50 p-4 rounded-lg">
-          <div><span class="font-bold">OS:</span> {{ currentInfo.os || 'N/A' }}</div>
-          <div><span class="font-bold">运行时间:</span> {{ currentInfo.upTime || 'N/A' }}</div>
-          <div><span class="font-bold">处理器:</span> {{ currentInfo.processor || 'N/A' }}</div>
-          <div><span class="font-bold">内存:</span> {{ currentInfo.availableMemory }} / {{ currentInfo.totalMemory }}</div>
-        </div>
+            <div class="mt-6 flex flex-1 min-h-0 flex-col rounded-[28px] border border-ui-border bg-gradient-to-br from-slate-50 via-white to-slate-50 p-5 shadow-sm lg:p-6">
+              <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <h3 class="text-lg font-bold text-ui-text">服务器状态盘</h3>
+                  <p class="mt-1 text-sm text-ui-subtext">参考你给的小盘样式改成横向阵列，首页只监控 CPU 与内存，不监控组件。</p>
+                </div>
 
-        <div class="h-64 relative w-full flex items-center justify-center">
-          <canvas v-if="hasChartData" ref="monitorChartRef"></canvas>
-          <div v-else class="text-gray-400">正在获取监控数据...</div>
-        </div>
-      </el-card>
+                <div class="flex flex-wrap items-center gap-3">
+                  <!-- <div class="hidden xl:flex items-center gap-2 rounded-full border border-ui-border bg-white px-3 py-2 text-xs text-ui-subtext shadow-sm">
+                    <svg class="h-4 w-4 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16l-4-4m0 0l4-4m-4 4h18m-4 4l4-4m0 0l-4-4" />
+                    </svg>
+                    左右滑动 / 触控板 / 多点触控 
+                  </div> -->
 
-      <!-- 最新信息与告警 -->
-      <el-card
-        class="w-full lg:w-1/3 bg-ui-card rounded-lg shadow-sm border border-ui-border"
-        :body-style="{ padding: '24px' }"
-      >
-        <div class="flex justify-between items-center mb-6">
-          <h3 class="text-lg font-bold text-ui-text">最新信息与告警</h3>
-          <router-link
-            to="/info-list"
-            class="text-sm text-brand hover:underline"
-          >
-            查看全部
-          </router-link>
-        </div>
+                  <div class="inline-flex items-center rounded-full border border-ui-border bg-white p-1 shadow-sm">
+                    <button
+                      type="button"
+                      class="flex h-9 w-9 items-center justify-center rounded-full text-ui-subtext transition-colors hover:bg-ui-bg hover:text-ui-text disabled:cursor-not-allowed disabled:opacity-40"
+                      :disabled="activeCardIndex <= 0"
+                      @click="switchCarousel(-1)"
+                    >
+                      <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      class="flex h-9 w-9 items-center justify-center rounded-full text-ui-subtext transition-colors hover:bg-ui-bg hover:text-ui-text disabled:cursor-not-allowed disabled:opacity-40"
+                      :disabled="activeCardIndex >= carouselItems.length - 1"
+                      @click="switchCarousel(1)"
+                    >
+                      <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
 
-        <div class="space-y-4 max-h-[400px] overflow-y-auto">
-          <div v-if="loadingInfo" class="text-center text-gray-400 py-4">加载中...</div>
+              <div class="mt-6 flex flex-1 min-h-0 flex-col">
+                <div
+                  ref="carouselRef"
+                  class="server-carousel flex-1 min-h-0"
+                  tabindex="0"
+                  @scroll.passive="handleCarouselScroll"
+                  @keydown.left.prevent="switchCarousel(-1)"
+                  @keydown.right.prevent="switchCarousel(1)"
+                  @wheel.prevent="handleCarouselWheel"
+                >
+                  <article
+                    v-for="(item, index) in carouselItems"
+                    :key="item.key"
+                    :ref="el => setSlideRef(el, index)"
+                    class="server-slide"
+                    :class="{ 'is-active': activeCardIndex === index, 'server-slide-add': item.type === 'add' }"
+                    :style="getSlideStyle(index)"
+                    @click="item.type === 'add' ? openAddMonitorDialog() : openServerDetail(item.serverIp)"
+                    @keyup.enter.prevent="item.type === 'add' ? openAddMonitorDialog() : openServerDetail(item.serverIp)"
+                    @keyup.space.prevent="item.type === 'add' ? openAddMonitorDialog() : openServerDetail(item.serverIp)"
+                    :tabindex="0"
+                  >
+                    <template v-if="item.type === 'add'">
+                      <div class="flex h-full flex-col items-center justify-center rounded-[24px] border border-dashed border-brand/30 bg-gradient-to-br from-blue-50 to-white p-8 text-center">
+                        <div class="flex h-[72px] w-[72px] items-center justify-center rounded-full bg-brand/10 text-brand">
+                          <svg class="h-10 w-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v12m6-6H6" />
+                          </svg>
+                        </div>
+                        <h4 class="mt-6 text-2xl font-bold text-ui-text">添加服务器监控</h4>
+                        <p class="mt-3 max-w-[260px] text-sm leading-6 text-ui-subtext">
+                          只添加服务器级监控，不监控组件日志；只采集 CPU 与内存使用率。
+                        </p>
+                        <div class="mt-6 inline-flex items-center rounded-full bg-brand px-4 py-2 text-sm font-semibold text-white shadow-sm">
+                          立即添加
+                        </div>
+                      </div>
+                    </template>
 
-          <div v-else-if="infoList.length === 0" class="text-center text-gray-400 py-4">暂无数据</div>
+                    <template v-else>
+                      <div class="flex h-full flex-col justify-between rounded-[24px] border border-white/80 bg-gradient-to-br from-white via-white to-slate-50 p-6 shadow-[0_18px_50px_-34px_rgba(26,37,48,0.45)] ring-1 ring-white/80">
+                        <div class="flex items-start justify-between gap-3">
+                          <div class="min-w-0">
+                            <p class="truncate text-sm font-semibold text-ui-text">{{ item.serverIp }}</p>
+                            <p class="mt-1 text-xs text-ui-subtext">{{ item.subtitle }}</p>
+                          </div>
+                          <span class="rounded-full border px-3 py-1 text-xs font-semibold" :class="item.tone.pill">
+                            {{ item.health.label }}
+                          </span>
+                        </div>
 
-          <div
-            v-else
-            v-for="(info, index) in infoList"
-            :key="index"
-            class="flex items-start p-3 rounded-lg border-l-4"
-            :class="getAlertClass(info.riskLevel)"
-          >
-            <div class="flex-1">
-              <h4 class="text-sm font-bold text-gray-800">
-                {{ info.component }} - {{ info.riskLevel }}
-              </h4>
-              <p class="text-xs text-gray-600 mt-1">服务器: {{ info.serverIp }}</p>
-              <p class="text-xs text-gray-400 mt-2">{{ formatDate(info.createdAt) }}</p>
+                        <div class="relative my-6 flex items-center justify-center">
+                          <svg class="h-[190px] w-[190px] -rotate-90" viewBox="0 0 160 160" aria-hidden="true">
+                            <defs>
+                              <linearGradient :id="`server-card-gradient-${index}`" x1="0%" y1="0%" x2="100%" y2="0%">
+                                <stop offset="0%" :stop-color="item.tone.gradientStart" />
+                                <stop offset="100%" :stop-color="item.tone.gradientEnd" />
+                              </linearGradient>
+                            </defs>
+
+                            <circle cx="80" cy="80" r="52" fill="none" :stroke="item.tone.track" stroke-width="12" />
+                            <circle
+                              cx="80"
+                              cy="80"
+                              r="52"
+                              fill="none"
+                              :stroke="`url(#server-card-gradient-${index})`"
+                              stroke-width="12"
+                              stroke-linecap="round"
+                              :stroke-dasharray="cardRingCircumference"
+                              :stroke-dashoffset="getCardRingOffset(item.health.score)"
+                            />
+                          </svg>
+
+                          <div class="absolute flex flex-col items-center">
+                            <div class="text-[36px] font-bold" :class="item.tone.text">{{ item.health.score }}%</div>
+                            <div class="mt-2 text-sm font-medium" :class="item.tone.softText">系统健康度</div>
+                          </div>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-3">
+                          <div class="rounded-2xl border border-ui-border bg-white px-4 py-3">
+                            <div class="text-xs uppercase tracking-[0.18em] text-ui-subtext">CPU</div>
+                            <div class="mt-2 text-xl font-bold" :class="item.cpuTone.text">{{ item.health.cpuUsage }}%</div>
+                          </div>
+                          <div class="rounded-2xl border border-ui-border bg-white px-4 py-3">
+                            <div class="text-xs uppercase tracking-[0.18em] text-ui-subtext">MEM</div>
+                            <div class="mt-2 text-xl font-bold" :class="item.memTone.text">{{ item.health.memUsage }}%</div>
+                          </div>
+                        </div>
+
+                        <div class="mt-5 flex items-center justify-between text-sm">
+                          <span class="text-ui-subtext">点击进入详情页</span>
+                          <span class="font-semibold text-brand">查看总览</span>
+                        </div>
+                      </div>
+                    </template>
+                  </article>
+                </div>
+
+                <div class="pt-6 flex items-center justify-center gap-2">
+                  <button
+                    v-for="(card, index) in serverCards"
+                    :key="`dot-${card.serverIp}`"
+                    type="button"
+                    class="server-dot"
+                    :class="{ 'is-active': activeCardIndex === index }"
+                    @click="snapToCard(index)"
+                  ></button>
+                </div>
+
+                <div v-if="!serverCards.length" class="pt-6 rounded-2xl border border-dashed border-ui-border bg-white/80 px-4 py-5 text-center text-sm text-ui-subtext">
+                  还没有服务器监控，先点击上方或右侧卡片添加一台服务器，只采集 CPU 与内存。
+                </div>
+              </div>
             </div>
           </div>
         </div>
-      </el-card>
+      </section>
+
+      <section class="dashboard-page">
+        <div class="dashboard-page-shell h-full" :style="getPageMotionStyle(1)">
+          <div class="h-full p-4 lg:p-6">
+            <div class="flex h-full min-h-0 flex-col overflow-hidden rounded-[26px] border border-ui-border bg-white shadow-sm">
+              <div class="flex items-center justify-between gap-4 border-b border-ui-border bg-white/90 px-5 py-4 backdrop-blur-sm lg:px-6">
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-2 rounded-full border border-ui-border bg-ui-bg px-4 py-2 text-sm font-medium text-ui-text transition-colors hover:border-brand hover:text-brand"
+                  @click="scrollToPage(0)"
+                >
+                  <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+                  </svg>
+                  返回首页
+                </button>
+
+                <div class="min-w-0 text-right">
+                  <div class="text-xs uppercase tracking-[0.18em] text-ui-subtext">总览详情</div>
+                  <div class="truncate text-sm font-medium text-ui-text">{{ selectedServer || '当前服务器' }}</div>
+                </div>
+              </div>
+
+              <div class="flex-1 min-h-0 bg-ui-bg p-4 lg:p-6">
+                <DashboardOverviewDetail
+                  class="h-full"
+                  :health-state="selectedHealthState"
+                  :info-list="selectedServerInfoList"
+                  :loading-info="loadingInfo"
+                  :server-list="serverList"
+                  :selected-server="selectedServer"
+                  :loading-monitor="loadingMonitor"
+                  :current-info="currentInfo"
+                  :history-data="historyData"
+                  @server-change="handleServerChange"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
+
+    <el-dialog
+      v-model="addMonitorDialogVisible"
+      title="添加服务器监控"
+      width="520px"
+      destroy-on-close
+    >
+      <div class="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-brand">
+        这里只添加服务器级监控，不创建组件日志监控任务；保存后只采集 CPU 和内存指标。
+      </div>
+
+      <el-form class="mt-5" label-position="top">
+        <el-form-item label="服务器 IP">
+          <el-input v-model="addMonitorForm.serverIp" placeholder="192.168.1.10 或 192.168.1.10:22" clearable />
+        </el-form-item>
+
+        <div class="grid gap-4 md:grid-cols-2">
+          <el-form-item label="SSH 用户名">
+            <el-input v-model="addMonitorForm.username" placeholder="root" clearable />
+          </el-form-item>
+
+          <el-form-item label="SSH 密码">
+            <el-input v-model="addMonitorForm.password" type="password" placeholder="请输入 SSH 密码" show-password />
+          </el-form-item>
+        </div>
+      </el-form>
+
+      <template #footer>
+        <div class="flex justify-end gap-3">
+          <el-button @click="addMonitorDialogVisible = false">取消</el-button>
+          <el-button type="primary" :loading="addMonitorLoading" @click="submitAddServerMonitor">
+            保存并开始监控
+          </el-button>
+        </div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, nextTick } from 'vue'
-import Chart from 'chart.js/auto'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { ElMessage } from 'element-plus'
+import { addServerMonitor } from '../api/diagnosis'
 import { selectAllInfo } from '../api/info'
 import { getSystemDashboard } from '../api/monitor'
+import DashboardOverviewDetail from '../components/DashboardOverviewDetail.vue'
+import {
+  formatDate,
+  getDateTimestamp,
+  normalizeRiskLevel,
+  resolveSystemHealth,
+} from '../utils/dashboardHealth'
 
-const monitorChartRef = ref(null)
-let monitorChartInstance = null
-const currentInfo = ref({})
-const serverList = ref([])
-const selectedServer = ref('')
-const loadingMonitor = ref(false)
+const pageTabs = [
+  { label: '首页' },
+  { label: '详情页' },
+]
+
+const pagerRef = ref(null)
+const carouselRef = ref(null)
+const slideElements = ref([])
+const slideMotionStyles = ref([])
+
+const activePage = ref(0)
+const scrollProgress = ref(0)
+const activeCardIndex = ref(0)
 
 const infoList = ref([])
-const activeAlertCount = ref(0)
-const totalLogsCount = ref(0)
-const highRiskCount = ref(0)
-const healthScore = ref(100)
-const hasChartData = ref(false)
 const loadingInfo = ref(false)
 
-// 获取监控数据
-const fetchMonitorData = async (ip) => {
-  loadingMonitor.value = true
-  try {
-    const res = await getSystemDashboard(ip || selectedServer.value)
-    if (res) {
-      if (res.servers && res.servers.length > 0) {
-        serverList.value = res.servers
-      }
-      
-      if (res.selectedIp) {
-        selectedServer.value = res.selectedIp
-      }
+const currentInfo = ref({})
+const historyData = ref([])
+const serverList = ref([])
+const selectedServer = ref('')
+const serverMonitorMap = ref({})
+const loadingMonitor = ref(false)
+const lastUpdatedAt = ref('')
 
-      currentInfo.value = res.current || {}
-      
-      if (res.history && res.history.length > 0) {
-        hasChartData.value = true
-        await nextTick()
-        updateMonitorChart(res.history)
-      } else {
-        hasChartData.value = false
-        if (monitorChartInstance) {
-          monitorChartInstance.destroy()
-          monitorChartInstance = null
-        }
-      }
+const addMonitorDialogVisible = ref(false)
+const addMonitorLoading = ref(false)
+const addMonitorForm = reactive({
+  serverIp: '',
+  username: '',
+  password: '',
+})
+
+let refreshTimer = null
+let scrollFrame = null
+let carouselFrame = null
+
+const selectedServerInfoList = computed(() => {
+  if (!selectedServer.value) return infoList.value
+  return infoList.value.filter(item => item.serverIp === selectedServer.value)
+})
+
+const lastUpdatedLabel = computed(() => lastUpdatedAt.value ? formatDate(lastUpdatedAt.value) : '等待刷新')
+
+const toneMap = {
+  success: {
+    text: 'text-ui-success',
+    softText: 'text-green-600',
+    pill: 'border-green-100 bg-green-50 text-ui-success',
+    track: 'rgba(72, 187, 120, 0.16)',
+    gradientStart: '#8de3aa',
+    gradientEnd: '#48bb78',
+  },
+  warning: {
+    text: 'text-ui-warning',
+    softText: 'text-orange-600',
+    pill: 'border-orange-100 bg-orange-50 text-ui-warning',
+    track: 'rgba(237, 137, 54, 0.16)',
+    gradientStart: '#f6be73',
+    gradientEnd: '#ed8936',
+  },
+  error: {
+    text: 'text-ui-error',
+    softText: 'text-red-600',
+    pill: 'border-red-100 bg-red-50 text-ui-error',
+    track: 'rgba(245, 101, 101, 0.16)',
+    gradientStart: '#f89a9a',
+    gradientEnd: '#f56565',
+  },
+}
+
+const getToneByLevel = level => toneMap[level] || toneMap.success
+
+const buildUsageTone = usage => {
+  if (usage >= 85) return { text: 'text-ui-error' }
+  if (usage >= 70) return { text: 'text-ui-warning' }
+  return { text: 'text-ui-success' }
+}
+
+const getServerInfoList = serverIp => {
+  if (!serverIp) return []
+  return infoList.value.filter(item => item.serverIp === serverIp)
+}
+
+const buildPendingHealthState = infoItems => {
+  const baseState = resolveSystemHealth({
+    currentInfo: { cpuUsage: 0, memUsage: 0 },
+    infoList: infoItems,
+  })
+
+  if (baseState.level !== 'success' || baseState.activeAlertCount > 0) {
+    return {
+      ...baseState,
+      description: `${baseState.description} 当前监控数据暂未刷新，资源占用按 0% 暂存显示。`,
+      reasons: [
+        ...baseState.reasons,
+        '当前服务器尚未拿到最新 CPU / 内存采样数据，将在下一次采样后刷新。',
+      ],
     }
-  } catch (error) {
-    console.error('Failed to fetch monitor data:', error)
-  } finally {
-    loadingMonitor.value = false
+  }
+
+  return {
+    ...baseState,
+    score: 0,
+    label: '待采样',
+    level: 'warning',
+    description: '暂未获取到 CPU 与内存监控数据，请稍候等待首次采样。',
+    reasons: ['当前服务器还没有最新监控数据，系统将继续采集 CPU 与内存状态。'],
   }
 }
 
-const handleServerChange = (val) => {
-  fetchMonitorData(val)
+const selectedHealthState = computed(() => {
+  const hasData = currentInfo.value && Object.keys(currentInfo.value).length > 0
+
+  if (!hasData) {
+    return buildPendingHealthState(selectedServerInfoList.value)
+  }
+
+  return resolveSystemHealth({
+    currentInfo: currentInfo.value,
+    infoList: selectedServerInfoList.value,
+  })
+})
+
+const serverCards = computed(() => serverList.value.map(serverIp => {
+  const snapshot = serverMonitorMap.value[serverIp] || {}
+  const serverInfoList = getServerInfoList(serverIp)
+  const hasData = snapshot.current && Object.keys(snapshot.current).length > 0
+  const health = hasData
+    ? resolveSystemHealth({ currentInfo: snapshot.current || {}, infoList: serverInfoList })
+    : buildPendingHealthState(serverInfoList)
+
+  return {
+    key: serverIp,
+    type: 'server',
+    serverIp,
+    subtitle: snapshot.current?.os || '等待首次 CPU / 内存采样',
+    health,
+    tone: getToneByLevel(health.level),
+    cpuTone: buildUsageTone(health.cpuUsage),
+    memTone: buildUsageTone(health.memUsage),
+  }
+}))
+
+const carouselItems = computed(() => ([
+  ...serverCards.value,
+  { key: '__add_server_monitor__', type: 'add' },
+]))
+
+const dashboardStats = computed(() => {
+  const cards = serverCards.value
+  const total = cards.length
+  const success = cards.filter(card => card.health.level === 'success').length
+  const warning = cards.filter(card => card.health.level === 'warning').length
+  const averageScore = total
+    ? Math.round(cards.reduce((sum, card) => sum + card.health.score, 0) / total)
+    : 0
+
+  return {
+    total,
+    success,
+    warning,
+    averageScore,
+  }
+})
+
+const averageScoreTone = computed(() => {
+  if (dashboardStats.value.averageScore >= 80) return toneMap.success
+  if (dashboardStats.value.averageScore >= 60) return toneMap.warning
+  return toneMap.error
+})
+
+const cardRingRadius = 52
+const cardRingCircumference = Number((2 * Math.PI * cardRingRadius).toFixed(2))
+
+const getCardRingOffset = score => Number(
+  (cardRingCircumference * (1 - Math.max(0, Math.min(score, 100)) / 100)).toFixed(2),
+)
+
+const setSlideRef = (el, index) => {
+  slideElements.value[index] = el
 }
 
-const updateMonitorChart = (history) => {
-  if (!monitorChartRef.value) return
+const getSlideStyle = index => slideMotionStyles.value[index] || {
+  transform: 'scale(0.94)',
+  opacity: '0.62',
+}
 
-  const labels = history.map(item => item.time)
-  const cpuData = history.map(item => item.cpuUsage)
-  const memData = history.map(item => item.memUsage)
+const updateCarouselMotion = () => {
+  const carousel = carouselRef.value
+  if (!carousel) return
 
-  if (monitorChartInstance) {
-    monitorChartInstance.data.labels = labels
-    monitorChartInstance.data.datasets[0].data = cpuData
-    monitorChartInstance.data.datasets[1].data = memData
-    monitorChartInstance.update()
-  } else {
-    monitorChartInstance = new Chart(monitorChartRef.value, {
-      type: 'line',
-      data: {
-        labels,
-        datasets: [
-          {
-            label: 'CPU使用率 (%)',
-            data: cpuData,
-            borderColor: '#3182ce', // blue
-            backgroundColor: 'rgba(49, 130, 206, 0.1)',
-            fill: true,
-            tension: 0.4,
-            yAxisID: 'y',
-          },
-          {
-            label: '内存使用率 (%)',
-            data: memData,
-            borderColor: '#38a169', // green
-            backgroundColor: 'rgba(56, 161, 105, 0.1)',
-            fill: true,
-            tension: 0.4,
-            yAxisID: 'y',
-          }
-        ],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        interaction: {
-          mode: 'index',
-          intersect: false,
-        },
-        plugins: {
-          legend: {
-            position: 'top',
-          },
-          tooltip: {
-            callbacks: {
-              label: function(context) {
-                return context.dataset.label + ': ' + context.parsed.y.toFixed(1) + '%';
-              }
-            }
-          }
-        },
-        scales: {
-          y: {
-            beginAtZero: true,
-            max: 100,
-            grid: { color: '#e2e8f0' },
-            title: {
-              display: true,
-              text: '使用率 (%)'
-            }
-          },
-          x: { 
-            grid: { display: false },
-            ticks: {
-              maxTicksLimit: 10
-            }
-          },
-        },
-      },
-    })
+  const rect = carousel.getBoundingClientRect()
+  const center = rect.left + rect.width / 2
+  const styles = []
+  let nextActiveIndex = 0
+  let minDistance = Number.POSITIVE_INFINITY
+
+  slideElements.value.forEach((element, index) => {
+    if (!element) return
+
+    const slideRect = element.getBoundingClientRect()
+    const slideCenter = slideRect.left + slideRect.width / 2
+    const distance = Math.abs(slideCenter - center)
+    const ratio = Math.min(1, distance / Math.max(rect.width * 0.52, 1))
+    const scale = 1 - ratio * 0.06
+    const opacity = 1 - ratio * 0.42
+
+    styles[index] = {
+      transform: `scale(${scale.toFixed(3)})`,
+      opacity: opacity.toFixed(3),
+    }
+
+    if (distance < minDistance) {
+      minDistance = distance
+      nextActiveIndex = index
+    }
+  })
+
+  slideMotionStyles.value = styles
+  activeCardIndex.value = nextActiveIndex
+}
+
+const handleCarouselScroll = () => {
+  if (carouselFrame) cancelAnimationFrame(carouselFrame)
+  carouselFrame = requestAnimationFrame(updateCarouselMotion)
+}
+
+const handleCarouselWheel = event => {
+  const carousel = carouselRef.value
+  if (!carousel) return
+
+  const delta = Math.abs(event.deltaY) > Math.abs(event.deltaX) ? event.deltaY : event.deltaX
+  carousel.scrollBy({ left: delta, behavior: 'auto' })
+}
+
+const snapToCard = index => {
+  const element = slideElements.value[index]
+  element?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' })
+}
+
+const switchCarousel = direction => {
+  const nextIndex = Math.max(0, Math.min(activeCardIndex.value + direction, carouselItems.value.length - 1))
+  snapToCard(nextIndex)
+}
+
+const syncPagerState = () => {
+  const pager = pagerRef.value
+  if (!pager) return
+
+  const pageWidth = pager.clientWidth || 1
+  scrollProgress.value = pager.scrollLeft / pageWidth
+  activePage.value = Math.round(scrollProgress.value)
+}
+
+const handlePagerScroll = () => {
+  if (scrollFrame) cancelAnimationFrame(scrollFrame)
+  scrollFrame = requestAnimationFrame(syncPagerState)
+}
+
+const scrollToPage = (index, smooth = true) => {
+  const pager = pagerRef.value
+  if (!pager) return
+
+  const targetPage = Math.max(0, Math.min(index, pageTabs.length - 1))
+  activePage.value = targetPage
+  pager.scrollTo({
+    left: targetPage * pager.clientWidth,
+    behavior: smooth ? 'smooth' : 'auto',
+  })
+
+  if (!smooth) {
+    scrollProgress.value = targetPage
   }
 }
 
-const normalizeRiskLevel = level => {
-  const value = String(level || '').trim()
-  if (['高', '中', '低', '无'].includes(value)) return value
-  const lowered = value.toLowerCase()
-  if (lowered.includes('high') || lowered.includes('critical') || lowered.includes('error')) return '高'
-  if (lowered.includes('medium') || lowered.includes('warning') || lowered.includes('warn')) return '中'
-  if (lowered.includes('low') || lowered.includes('info')) return '低'
-  if (lowered.includes('normal') || lowered.includes('none') || lowered.includes('ok') || lowered.includes('safe')) return '无'
-  return '中'
+const switchPage = direction => {
+  scrollToPage(activePage.value + direction)
 }
 
-// 获取后端数据 (Info)
+const getPageMotionStyle = index => {
+  const distance = Math.min(Math.abs(scrollProgress.value - index), 1)
+  const scale = 1 - distance * 0.04
+  const opacity = 1 - distance * 0.26
+  const translateY = distance * 10
+
+  return {
+    transform: `scale(${scale.toFixed(3)}) translateY(${translateY.toFixed(1)}px)`,
+    opacity: opacity.toFixed(3),
+  }
+}
+
+const syncSelectedSnapshot = () => {
+  const snapshot = serverMonitorMap.value[selectedServer.value]
+  currentInfo.value = snapshot?.current || {}
+  historyData.value = snapshot?.history || []
+}
+
+const applyServerSnapshot = (serverIp, payload) => {
+  if (!serverIp) return
+
+  serverMonitorMap.value = {
+    ...serverMonitorMap.value,
+    [serverIp]: {
+      serverIp,
+      current: payload?.current || {},
+      history: Array.isArray(payload?.history) ? payload.history : [],
+      fetchedAt: Date.now(),
+    },
+  }
+}
+
 const fetchInfo = async () => {
   loadingInfo.value = true
+
   try {
     const res = await selectAllInfo()
-    if (res && Array.isArray(res)) {
-      infoList.value = res.map(item => ({
-        ...item,
-        riskLevel: normalizeRiskLevel(item?.riskLevel)
-      }))
 
-      activeAlertCount.value = infoList.value.filter(i =>
-        ['高', '中'].includes(i.riskLevel)
-      ).length
-
-      totalLogsCount.value = infoList.value.length
-
-      highRiskCount.value = infoList.value.filter(i => i.riskLevel === '高').length
-
-      const penalty =
-        highRiskCount.value * 10 +
-        (activeAlertCount.value - highRiskCount.value) * 5
-      healthScore.value = Math.max(0, 100 - penalty)
+    if (Array.isArray(res)) {
+      infoList.value = res
+        .map(item => ({
+          ...item,
+          riskLevel: normalizeRiskLevel(item?.riskLevel),
+        }))
+        .sort((left, right) => getDateTimestamp(right.createdAt) - getDateTimestamp(left.createdAt))
+    } else {
+      infoList.value = []
     }
   } catch (error) {
     console.error('Failed to fetch info:', error)
@@ -393,37 +626,269 @@ const fetchInfo = async () => {
   }
 }
 
-const getAlertClass = level => {
-  const map = {
-    高: 'bg-red-50 border-ui-error',
-    中: 'bg-orange-50 border-ui-warning',
-    低: 'bg-blue-50 border-brand',
-    无: 'bg-gray-50 border-gray-300',
+const fetchServerSnapshot = async serverIp => {
+  if (!serverIp) return null
+
+  try {
+    const res = await getSystemDashboard(serverIp)
+    applyServerSnapshot(serverIp, res)
+    if (selectedServer.value === serverIp) {
+      syncSelectedSnapshot()
+    }
+    return res
+  } catch (error) {
+    console.error(`Failed to fetch monitor data for ${serverIp}:`, error)
+    return null
   }
-  return map[normalizeRiskLevel(level)] || map.无
 }
 
-const formatDate = dateStr => {
-  if (!dateStr) return ''
-  if (Array.isArray(dateStr)) {
-    const [y, m, d, h, min, s] = dateStr
-    return new Date(y, (m || 1) - 1, d || 1, h || 0, min || 0, s || 0).toLocaleString()
+const refreshDashboard = async preferredServer => {
+  loadingMonitor.value = true
+
+  try {
+    const overview = await getSystemDashboard(preferredServer || selectedServer.value)
+    const nextServerList = Array.from(new Set((overview?.servers || []).filter(Boolean)))
+
+    serverList.value = nextServerList
+
+    const targetServer = nextServerList.includes(preferredServer)
+      ? preferredServer
+      : (nextServerList.includes(overview?.selectedIp)
+        ? overview.selectedIp
+        : (nextServerList.includes(selectedServer.value) ? selectedServer.value : (nextServerList[0] || '')))
+    selectedServer.value = targetServer
+
+    if (!nextServerList.length) {
+      serverMonitorMap.value = {}
+      currentInfo.value = {}
+      historyData.value = []
+      return
+    }
+
+    const nextMonitorMap = {}
+    nextServerList.forEach(serverIp => {
+      if (serverMonitorMap.value[serverIp]) {
+        nextMonitorMap[serverIp] = serverMonitorMap.value[serverIp]
+      }
+    })
+    serverMonitorMap.value = nextMonitorMap
+
+    if (overview?.selectedIp) {
+      applyServerSnapshot(overview.selectedIp, overview)
+    }
+
+    await Promise.allSettled(
+      nextServerList.map(serverIp => {
+        if (serverIp === overview?.selectedIp) return Promise.resolve(overview)
+        return fetchServerSnapshot(serverIp)
+      }),
+    )
+
+    syncSelectedSnapshot()
+    lastUpdatedAt.value = new Date().toISOString()
+  } catch (error) {
+    console.error('Failed to refresh dashboard:', error)
+  } finally {
+    loadingMonitor.value = false
   }
-  return new Date(dateStr).toLocaleString()
 }
 
-let timer = null
+const handleServerChange = async serverIp => {
+  selectedServer.value = serverIp
+  syncSelectedSnapshot()
+  await fetchServerSnapshot(serverIp)
+}
 
-onMounted(() => {
-  fetchInfo()
-  fetchMonitorData()
-  // 每60秒刷新一次监控数据
-  timer = setInterval(() => fetchMonitorData(), 60000)
+const scrollCardIntoViewByIp = serverIp => {
+  const index = serverCards.value.findIndex(card => card.serverIp === serverIp)
+  if (index >= 0) {
+    snapToCard(index)
+  }
+}
+
+const openServerDetail = async serverIp => {
+  selectedServer.value = serverIp
+  syncSelectedSnapshot()
+
+  const snapshot = serverMonitorMap.value[serverIp]
+  if (!snapshot?.current || !Object.keys(snapshot.current).length) {
+    await fetchServerSnapshot(serverIp)
+  }
+
+  scrollToPage(1)
+}
+
+const resetAddMonitorForm = () => {
+  addMonitorForm.serverIp = ''
+  addMonitorForm.username = ''
+  addMonitorForm.password = ''
+}
+
+const openAddMonitorDialog = () => {
+  addMonitorDialogVisible.value = true
+}
+
+const submitAddServerMonitor = async () => {
+  const serverIp = addMonitorForm.serverIp.trim()
+  const username = addMonitorForm.username.trim()
+  const password = addMonitorForm.password
+
+  if (!serverIp || !username || !password) {
+    ElMessage.warning('请完整填写服务器 IP、SSH 用户名和密码')
+    return
+  }
+
+  addMonitorLoading.value = true
+
+  try {
+    await addServerMonitor({ serverIp, username, password })
+    ElMessage.success('服务器监控已添加，开始采集 CPU 与内存数据')
+    addMonitorDialogVisible.value = false
+    resetAddMonitorForm()
+
+    await refreshDashboard(serverIp)
+    await nextTick()
+    scrollCardIntoViewByIp(serverIp)
+  } catch (error) {
+    ElMessage.error(error?.message || '添加服务器监控失败')
+  } finally {
+    addMonitorLoading.value = false
+  }
+}
+
+const handleResize = async () => {
+  scrollToPage(activePage.value, false)
+  await nextTick()
+  updateCarouselMotion()
+}
+
+watch(carouselItems, async () => {
+  await nextTick()
+  updateCarouselMotion()
+}, { deep: true })
+
+onMounted(async () => {
+  await Promise.allSettled([
+    fetchInfo(),
+    refreshDashboard(),
+  ])
+
+  await nextTick()
+  syncPagerState()
+  scrollToPage(0, false)
+  scrollCardIntoViewByIp(selectedServer.value)
+  updateCarouselMotion()
+
+  window.addEventListener('resize', handleResize)
+  refreshTimer = setInterval(async () => {
+    await Promise.allSettled([
+      fetchInfo(),
+      refreshDashboard(selectedServer.value),
+    ])
+  }, 60000)
 })
 
 onUnmounted(() => {
-  if (timer) clearInterval(timer)
-  if (monitorChartInstance) monitorChartInstance.destroy()
+  if (refreshTimer) clearInterval(refreshTimer)
+  if (scrollFrame) cancelAnimationFrame(scrollFrame)
+  if (carouselFrame) cancelAnimationFrame(carouselFrame)
+  window.removeEventListener('resize', handleResize)
 })
 </script>
 
+<style scoped>
+.dashboard-pager {
+  display: flex;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  scroll-behavior: smooth;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  touch-action: pan-y pinch-zoom;
+  overscroll-behavior-x: contain;
+}
+
+.dashboard-pager::-webkit-scrollbar {
+  display: none;
+}
+
+.dashboard-page {
+  flex: 0 0 100%;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  scroll-snap-align: center;
+  scroll-snap-stop: always;
+}
+
+.dashboard-page-shell {
+  transform-origin: center center;
+  transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1), opacity 260ms ease;
+  will-change: transform, opacity;
+}
+
+.server-carousel {
+  display: flex;
+  gap: clamp(16px, 2.4vw, 24px);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  scroll-padding-inline: 8px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  touch-action: pan-x pinch-zoom;
+  overscroll-behavior-x: contain;
+  padding: 6px 2px 10px;
+}
+
+.server-carousel::-webkit-scrollbar {
+  display: none;
+}
+
+.server-slide {
+  flex: 0 0 auto;
+  width: clamp(280px, 30vw, 340px);
+  min-height: 480px;
+  scroll-snap-align: center;
+  scroll-snap-stop: always;
+  transition: transform 260ms ease, opacity 260ms ease, box-shadow 260ms ease;
+  will-change: transform, opacity;
+  cursor: pointer;
+}
+
+.server-slide.is-active {
+  z-index: 1;
+}
+
+.server-slide-add {
+  width: clamp(280px, 30vw, 340px);
+}
+
+.server-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(113, 128, 150, 0.3);
+  transform: scale(0.92);
+  transition: transform 240ms ease, background-color 240ms ease;
+}
+
+.server-dot.is-active {
+  background: #4299e1;
+  transform: scale(1.4);
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: #cbd5e0;
+  border-radius: 3px;
+}
+</style>

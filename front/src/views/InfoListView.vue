@@ -86,12 +86,7 @@
         </el-table-column>
       </el-table>
 
-      <div
-        v-if="!loading && infoList.length === 0"
-        class="py-10 text-center text-sm text-ui-subtext"
-      >
-        暂无告警或信息记录
-      </div>
+      
 
       <div v-if="total > 0" class="flex justify-end py-4 px-4 border-t border-ui-border">
         <el-pagination

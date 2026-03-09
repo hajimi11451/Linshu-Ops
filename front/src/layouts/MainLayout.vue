@@ -8,7 +8,7 @@
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
             </svg>
           </div>
-          <span class="text-white text-lg font-bold tracking-wide">AIOps</span>
+          <span class="text-white text-lg font-bold tracking-wide">Mimir-Ops</span>
         </router-link>
       </div>
 
@@ -21,7 +21,7 @@
           <svg class="mr-3 h-5 w-5" :class="$route.path === '/dashboard' ? 'text-brand' : 'group-hover:text-gray-300'" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
           </svg>
-          <span class="text-sm" :class="{ 'font-semibold': $route.path === '/dashboard' }">总览 Dashboard</span>
+          <span class="text-sm" :class="{ 'font-semibold': $route.path === '/dashboard' }">总览</span>
         </router-link>
 
         <router-link
@@ -82,7 +82,7 @@
         </div>
       </header>
 
-      <main class="flex-1 overflow-y-auto bg-ui-bg p-8 custom-scrollbar">
+      <main :class="mainContentClass">
         <RouterView />
       </main>
     </div>
@@ -98,7 +98,15 @@ const router = useRouter()
 
 const username = ref('Admin')
 
-const breadcrumbTitle = computed(() => route.meta?.title || '总览 Dashboard')
+const breadcrumbTitle = computed(() => route.meta?.title || '总览')
+
+const mainContentClass = computed(() => {
+  if (route.path === '/dashboard') {
+    return 'flex-1 overflow-hidden bg-ui-bg p-0'
+  }
+
+  return 'flex-1 overflow-y-auto bg-ui-bg p-8 custom-scrollbar'
+})
 
 const handleLogout = () => {
   localStorage.removeItem('user')

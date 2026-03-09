@@ -19,10 +19,26 @@ public final class InfoNormalizationUtils {
     }
 
     public static String normalizeComponent(String component) {
-        if (!StringUtils.hasText(component)) {
-            return "未识别组件";
+        if (isUnknownComponent(component)) {
+            return "无";
         }
         return component.trim();
+    }
+
+    public static boolean isUnknownComponent(String component) {
+        if (!StringUtils.hasText(component)) {
+            return true;
+        }
+
+        String normalized = component.trim();
+        String lowered = normalized.toLowerCase(Locale.ROOT);
+        return "未知".equals(normalized)
+                || "未识别组件".equals(normalized)
+                || "无".equals(normalized)
+                || "-".equals(normalized)
+                || "null".equals(lowered)
+                || "undefined".equals(lowered)
+                || "unknown".equals(lowered);
     }
 
     public static String normalizeText(String text, String defaultValue) {

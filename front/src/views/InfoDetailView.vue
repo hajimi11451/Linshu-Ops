@@ -6,6 +6,9 @@
         <p class="text-sm text-ui-subtext mt-1">查看完整诊断信息，并将选中的处理方式交给灵枢助手执行。</p>
       </div>
       <div class="flex items-center gap-2">
+        <el-button type="danger" plain :loading="deleting" @click="handleDeleteCurrent">
+          删除此条告警
+        </el-button>
         <el-button @click="goBack">返回列表</el-button>
         <el-button type="primary" plain @click="goAssistant">打开灵枢助手</el-button>
       </div>
@@ -81,8 +84,8 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
-import { insertProcess, selectInfoById } from '../api/info'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { deleteInfo, insertProcess, selectInfoById } from '../api/info'
 
 const PENDING_TASK_KEY = 'opsAssistantPendingTask'
 const MAX_ACTIONS = 4
@@ -93,6 +96,7 @@ const router = useRouter()
 const loading = ref(false)
 const info = ref(null)
 const submittingActionIndex = ref(-1)
+const deleting = ref(false)
 
 const actionList = computed(() => extractSuggestedActions(info.value?.suggestedActions))
 const formattedRiskLevel = computed(() => formatRiskLevel(info.value?.riskLevel))
@@ -257,6 +261,44 @@ async function handleSelectAction(action, index) {
     ElMessage.error(error?.message || '记录处理方式失败')
   } finally {
     submittingActionIndex.value = -1
+  }
+}
+
+async function handleDeleteCurrent() {
+  if (!info.value?.id) {
+    ElMessage.warning('当前告警缺少记录 ID，无法删除')
+    return
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      '删除后无法恢复，是否确认删除这条告警？',
+      '确认删除',
+      {
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+    )
+  } catch {
+    return
+  }
+
+  deleting.value = true
+  try {
+    const deleted = await deleteInfo(info.value.id)
+    if (!deleted) {
+      ElMessage.warning('未找到可删除的告警记录')
+      return
+    }
+
+    ElMessage.success('告警已删除')
+    router.push({ name: 'info-list' })
+  } catch (error) {
+    console.error('Failed to delete info', error)
+    ElMessage.error(error?.message || '删除告警失败')
+  } finally {
+    deleting.value = false
   }
 }
 

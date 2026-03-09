@@ -54,6 +54,17 @@ export function addConfig(data) {
   })
 }
 
+export function addServerMonitor(data) {
+  return request({
+    url: '/diagnosis/server-monitor/add',
+    method: 'post',
+    data: {
+      ...(data || {}),
+      appUsername: (data && data.appUsername) || getCurrentUsername()
+    }
+  })
+}
+
 export function listConfigs(username) {
   return request({
     url: '/diagnosis/config/list',

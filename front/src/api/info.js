@@ -78,3 +78,14 @@ export function deleteAllInfo(username) {
     data: { username: username || getCurrentUsername() }
   })
 }
+
+export function deleteInfo(id, username) {
+  return request({
+    url: '/info/deleteInfo',
+    method: 'post',
+    data: {
+      id: String(id || ''),
+      username: username || getCurrentUsername()
+    }
+  })
+}

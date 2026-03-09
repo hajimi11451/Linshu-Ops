@@ -34,7 +34,7 @@ const router = createRouter({
           name: 'dashboard',
           component: Dashboard,
           meta: {
-            title: '总览 Dashboard',
+            title: '总览',
           },
         },
         {

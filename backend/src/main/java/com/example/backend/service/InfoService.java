@@ -19,4 +19,6 @@ public interface InfoService {
     List<UserProcess> selectProcess(Map<String, String> request);
 
     int deleteAllInfo(Map<String, String> request);
+
+    int deleteInfo(Map<String, String> request);
 }

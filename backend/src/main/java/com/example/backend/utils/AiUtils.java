@@ -317,10 +317,13 @@ public class AiUtils {
                 JsonNode root = objectMapper.readTree(response.getBody());
                 if (root.has("choices") && root.get("choices").isArray() && root.get("choices").size() > 0) {
                     JsonNode choice = root.get("choices").get(0);
-                    if (choice.has("message") && choice.get("message").has("content")) {
+                    String content = extractMessageContent(choice.path("message"));
+                    if (StringUtils.hasText(content)) {
                         log.info("AI request success, model={}, elapsedMs={}", targetModel, System.currentTimeMillis() - start);
-                        return choice.get("message").get("content").asText();
+                        return content;
                     }
+                    log.warn("AI request returned choice but no usable content, model={}, elapsedMs={}, body={}",
+                            targetModel, System.currentTimeMillis() - start, response.getBody());
                 } else if (root.has("error")) {
                     log.error("AI request failed, model={}, elapsedMs={}, error={}",
                             targetModel, System.currentTimeMillis() - start, root.get("error"));
@@ -331,6 +334,9 @@ public class AiUtils {
         } catch (HttpClientErrorException e) {
             log.error("AI request http error, model={}, status={}, elapsedMs={}, body={}",
                     targetModel, e.getStatusCode(), System.currentTimeMillis() - start, e.getResponseBodyAsString(), e);
+            if (e.getStatusCode().value() == 401) {
+                return "AI 鉴权失败，请检查 qianfan.v2.token 是否有效。";
+            }
             return "调用 AI 服务时发生异常。";
         } catch (Exception e) {
             log.error("Call AI API exception, model={}, elapsedMs={}", targetModel, System.currentTimeMillis() - start, e);
@@ -338,6 +344,65 @@ public class AiUtils {
         }
         log.warn("AI request finished without valid content, model={}, elapsedMs={}", targetModel, System.currentTimeMillis() - start);
         return "未能获取有效回答。";
+    }
+
+    private String extractMessageContent(JsonNode messageNode) {
+        if (messageNode == null || messageNode.isMissingNode() || messageNode.isNull()) {
+            return "";
+        }
+
+        JsonNode contentNode = messageNode.path("content");
+        String content = flattenContentNode(contentNode);
+        if (StringUtils.hasText(content)) {
+            return content;
+        }
+
+        String reasoningContent = flattenContentNode(messageNode.path("reasoning_content"));
+        if (StringUtils.hasText(reasoningContent)) {
+            return reasoningContent;
+        }
+        return "";
+    }
+
+    private String flattenContentNode(JsonNode contentNode) {
+        if (contentNode == null || contentNode.isMissingNode() || contentNode.isNull()) {
+            return "";
+        }
+        if (contentNode.isTextual()) {
+            return contentNode.asText("").trim();
+        }
+        if (contentNode.isArray()) {
+            StringBuilder sb = new StringBuilder();
+            for (JsonNode item : contentNode) {
+                String text = "";
+                if (item == null || item.isNull()) {
+                    continue;
+                }
+                if (item.isTextual()) {
+                    text = item.asText("");
+                } else if (item.isObject()) {
+                    text = item.path("text").asText("");
+                    if (!StringUtils.hasText(text)) {
+                        text = item.path("content").asText("");
+                    }
+                }
+                if (StringUtils.hasText(text)) {
+                    if (sb.length() > 0) {
+                        sb.append('\n');
+                    }
+                    sb.append(text.trim());
+                }
+            }
+            return sb.toString().trim();
+        }
+        if (contentNode.isObject()) {
+            String text = contentNode.path("text").asText("");
+            if (!StringUtils.hasText(text)) {
+                text = contentNode.path("content").asText("");
+            }
+            return text == null ? "" : text.trim();
+        }
+        return contentNode.asText("").trim();
     }
 
     /**

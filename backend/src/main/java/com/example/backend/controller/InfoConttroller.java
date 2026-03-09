@@ -88,4 +88,14 @@ public class InfoConttroller {
         return ResponseEntity.ok(response);
     }
 
+    @PostMapping("/deleteInfo")
+    public ResponseEntity<?> deleteInfo(@RequestBody Map<String, String> request) {
+        int deleted = infoService.deleteInfo(request);
+        Map<String, Object> response = new HashMap<>();
+        response.put("code", 200);
+        response.put("msg", deleted > 0 ? "删除成功" : "未找到可删除的告警");
+        response.put("data", deleted);
+        return ResponseEntity.ok(response);
+    }
+
 }

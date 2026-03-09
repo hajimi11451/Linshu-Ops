@@ -82,6 +82,33 @@ public class DiagnosisController {
         }
     }
 
+    @PostMapping("/server-monitor/add")
+    public ResponseEntity<?> addServerMonitor(@RequestBody com.example.backend.entity.ComponentConfig config) {
+        try {
+            Map<String, Object> data = diagnosisService.addServerMonitor(config);
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("code", 200);
+            response.put("msg", "服务器监控添加成功");
+            response.put("data", data);
+
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            Map<String, Object> response = new HashMap<>();
+            response.put("code", 400);
+            response.put("msg", e.getMessage());
+            response.put("data", null);
+
+            return ResponseEntity.badRequest().body(response);
+        } catch (Exception e) {
+            log.error("添加服务器监控时发生未知错误", e);
+            Map<String, Object> response = new HashMap<>();
+            response.put("code", 500);
+            response.put("msg", "服务器内部错误: " + e.getMessage());
+            return ResponseEntity.status(500).body(response);
+        }
+    }
+
     /**
      * 6. 获取监控配置列表
      */

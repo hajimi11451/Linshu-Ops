@@ -1,9 +1,11 @@
 package com.example.backend.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.example.backend.entity.ComponentConfig;
 import com.example.backend.entity.Information;
 import com.example.backend.entity.UserLogin;
 import com.example.backend.entity.UserProcess;
+import com.example.backend.mapper.ComponentConfigMapper;
 import com.example.backend.mapper.InformationMapper;
 import com.example.backend.mapper.UserLoginMapper;
 import com.example.backend.mapper.UserProcessMapper;
@@ -11,9 +13,13 @@ import com.example.backend.service.InfoService;
 import com.example.backend.utils.InfoNormalizationUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 @Service
@@ -24,6 +30,9 @@ public class InfoServiceImpl implements InfoService {
 
     @Autowired
     private UserProcessMapper userProcessMapper;
+
+    @Autowired
+    private ComponentConfigMapper componentConfigMapper;
 
     @Autowired
     private UserLoginMapper userLoginMapper;
@@ -206,10 +215,30 @@ public class InfoServiceImpl implements InfoService {
         return informationMapper.delete(queryWrapper);
     }
 
+    @Override
+    public int deleteInfo(Map<String, String> request) {
+        Long userId = resolveUserId(request);
+        if (userId == null) {
+            return 0;
+        }
+
+        String id = request.get("id");
+        if (!StringUtils.hasText(id)) {
+            return 0;
+        }
+
+        QueryWrapper<Information> queryWrapper = new QueryWrapper<>();
+        queryWrapper.eq("user_id", userId);
+        queryWrapper.eq("id", id.trim());
+        return informationMapper.delete(queryWrapper);
+    }
+
     private void normalizeInformationList(List<Information> response) {
         if (response == null || response.isEmpty()) {
             return;
         }
+
+        Map<String, List<ComponentConfig>> configCache = new HashMap<>();
 
         for (Information info : response) {
             if (info == null) {
@@ -217,12 +246,90 @@ public class InfoServiceImpl implements InfoService {
             }
 
             String normalizedRiskLevel = InfoNormalizationUtils.normalizeRiskLevel(info.getRiskLevel());
-            info.setComponent(InfoNormalizationUtils.normalizeComponent(info.getComponent()));
+            info.setComponent(resolveDisplayComponent(info, configCache));
             info.setErrorSummary(InfoNormalizationUtils.normalizeText(info.getErrorSummary(), "无"));
             info.setAnalysisResult(InfoNormalizationUtils.normalizeText(info.getAnalysisResult(), "无"));
+            info.setRawLog(InfoNormalizationUtils.normalizeText(info.getRawLog(), "无"));
             info.setRiskLevel(normalizedRiskLevel);
             info.setSuggestedActions(InfoNormalizationUtils.normalizeSuggestedActions(info.getSuggestedActions(), normalizedRiskLevel));
         }
+    }
+
+    private String resolveDisplayComponent(Information info, Map<String, List<ComponentConfig>> configCache) {
+        String currentComponent = info.getComponent();
+        List<ComponentConfig> configs = loadConfigsByUserAndServer(info.getUserId(), info.getServerIp(), configCache);
+        if (configs.isEmpty()) {
+            return InfoNormalizationUtils.normalizeComponent(currentComponent);
+        }
+
+        String matchedComponent = matchConfiguredComponent(currentComponent, configs);
+        if (StringUtils.hasText(matchedComponent)) {
+            return matchedComponent;
+        }
+
+        if (InfoNormalizationUtils.isUnknownComponent(currentComponent) && configs.size() == 1) {
+            return InfoNormalizationUtils.normalizeComponent(configs.get(0).getComponent());
+        }
+
+        return InfoNormalizationUtils.normalizeComponent(currentComponent);
+    }
+
+    private List<ComponentConfig> loadConfigsByUserAndServer(Long userId,
+                                                             String serverIp,
+                                                             Map<String, List<ComponentConfig>> configCache) {
+        if (userId == null || !StringUtils.hasText(serverIp)) {
+            return Collections.emptyList();
+        }
+
+        String cacheKey = userId + "@" + serverIp.trim();
+        if (configCache.containsKey(cacheKey)) {
+            return configCache.get(cacheKey);
+        }
+
+        QueryWrapper<ComponentConfig> queryWrapper = new QueryWrapper<>();
+        queryWrapper.eq("user_id", userId);
+        queryWrapper.eq("server_ip", serverIp.trim());
+
+        List<ComponentConfig> configs = componentConfigMapper.selectList(queryWrapper);
+        configCache.put(cacheKey, configs == null ? Collections.emptyList() : configs);
+        return configCache.get(cacheKey);
+    }
+
+    private String matchConfiguredComponent(String currentComponent, List<ComponentConfig> configs) {
+        String currentKey = normalizeLookupKey(currentComponent);
+        if (!StringUtils.hasText(currentKey)) {
+            return null;
+        }
+
+        for (ComponentConfig config : configs) {
+            if (config == null || !StringUtils.hasText(config.getComponent())) {
+                continue;
+            }
+
+            String configuredComponent = InfoNormalizationUtils.normalizeComponent(config.getComponent());
+            String configuredKey = normalizeLookupKey(configuredComponent);
+            if (!StringUtils.hasText(configuredKey)) {
+                continue;
+            }
+
+            if (configuredKey.equals(currentKey)
+                    || configuredKey.contains(currentKey)
+                    || currentKey.contains(configuredKey)) {
+                return configuredComponent;
+            }
+        }
+        return null;
+    }
+
+    private String normalizeLookupKey(String value) {
+        if (InfoNormalizationUtils.isUnknownComponent(value)) {
+            return "";
+        }
+
+        return value.trim()
+                .toLowerCase(Locale.ROOT)
+                .replace("服务", "")
+                .replaceAll("[\\s_-]+", "");
     }
 
     private String resolveProblemLog(Map<String, String> request) {

@@ -116,7 +116,10 @@
                     </template>
 
                     <template v-else>
-                      <div class="flex h-full flex-col justify-between rounded-[24px] border border-white/80 bg-gradient-to-br from-white via-white to-slate-50 p-6 shadow-[0_18px_50px_-34px_rgba(26,37,48,0.45)] ring-1 ring-white/80">
+                      <div
+                        class="server-status-card flex h-full flex-col justify-between rounded-[24px] border border-white/80 bg-gradient-to-br from-white via-white to-slate-50 p-6 shadow-[0_18px_50px_-34px_rgba(26,37,48,0.45)] ring-1 ring-white/80"
+                        :style="getServerCardVisualStyle(item)"
+                      >
                         <div class="flex items-start justify-between gap-3">
                           <div class="min-w-0">
                             <p class="truncate text-sm font-semibold text-ui-text">{{ item.serverIp }}</p>
@@ -127,15 +130,27 @@
                           </span>
                         </div>
 
-                        <div class="relative my-6 flex items-center justify-center">
-                          <svg class="h-[190px] w-[190px] -rotate-90" viewBox="0 0 160 160" aria-hidden="true">
+                        <div class="server-health-stage my-6">
+                          <span class="server-health-shadow" aria-hidden="true"></span>
+                          <span class="server-health-aura" aria-hidden="true"></span>
+                          <span class="server-health-plate" aria-hidden="true"></span>
+                          <span class="server-health-reflection" aria-hidden="true"></span>
+
+                          <svg class="server-health-ring h-[190px] w-[190px] -rotate-90" viewBox="0 0 160 160" aria-hidden="true">
                             <defs>
                               <linearGradient :id="`server-card-gradient-${index}`" x1="0%" y1="0%" x2="100%" y2="0%">
                                 <stop offset="0%" :stop-color="item.tone.gradientStart" />
                                 <stop offset="100%" :stop-color="item.tone.gradientEnd" />
                               </linearGradient>
+                              <radialGradient :id="`server-card-center-${index}`" cx="32%" cy="28%" r="76%">
+                                <stop offset="0%" stop-color="#ffffff" />
+                                <stop offset="54%" stop-color="#f8fafc" />
+                                <stop offset="100%" stop-color="#e2e8f0" />
+                              </radialGradient>
                             </defs>
 
+                            <circle cx="80" cy="80" r="58" :fill="`url(#server-card-center-${index})`" />
+                            <circle cx="80" cy="80" r="58" fill="none" stroke="rgba(255, 255, 255, 0.8)" stroke-width="1.5" />
                             <circle cx="80" cy="80" r="52" fill="none" :stroke="item.tone.track" stroke-width="12" />
                             <circle
                               cx="80"
@@ -150,18 +165,18 @@
                             />
                           </svg>
 
-                          <div class="absolute flex flex-col items-center">
-                            <div class="text-[36px] font-bold" :class="item.tone.text">{{ item.health.score }}%</div>
-                            <div class="mt-2 text-sm font-medium" :class="item.tone.softText">系统健康度</div>
+                          <div class="server-health-value">
+                            <div class="server-health-score text-[36px] font-bold" :class="item.tone.text">{{ item.health.score }}%</div>
+                            <div class="server-health-caption mt-2 text-sm font-medium" :class="item.tone.softText">系统健康度</div>
                           </div>
                         </div>
 
                         <div class="grid grid-cols-2 gap-3">
-                          <div class="rounded-2xl border border-ui-border bg-white px-4 py-3">
+                          <div class="server-metric-card rounded-2xl border border-ui-border bg-white px-4 py-3">
                             <div class="text-xs uppercase tracking-[0.18em] text-ui-subtext">CPU</div>
                             <div class="mt-2 text-xl font-bold" :class="item.cpuTone.text">{{ item.health.cpuUsage }}%</div>
                           </div>
-                          <div class="rounded-2xl border border-ui-border bg-white px-4 py-3">
+                          <div class="server-metric-card rounded-2xl border border-ui-border bg-white px-4 py-3">
                             <div class="text-xs uppercase tracking-[0.18em] text-ui-subtext">MEM</div>
                             <div class="mt-2 text-xl font-bold" :class="item.memTone.text">{{ item.health.memUsage }}%</div>
                           </div>
@@ -368,7 +383,35 @@ const toneMap = {
   },
 }
 
+const hexToRgba = (hex, alpha) => {
+  const normalized = String(hex || '').trim().replace('#', '')
+  const fullHex = normalized.length === 3
+    ? normalized.split('').map(char => `${char}${char}`).join('')
+    : normalized
+
+  if (fullHex.length !== 6) {
+    return `rgba(72, 187, 120, ${alpha})`
+  }
+
+  const red = Number.parseInt(fullHex.slice(0, 2), 16)
+  const green = Number.parseInt(fullHex.slice(2, 4), 16)
+  const blue = Number.parseInt(fullHex.slice(4, 6), 16)
+
+  if ([red, green, blue].some(Number.isNaN)) {
+    return `rgba(72, 187, 120, ${alpha})`
+  }
+
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`
+}
+
 const getToneByLevel = level => toneMap[level] || toneMap.success
+
+const getServerCardVisualStyle = item => ({
+  '--server-ring-glow': hexToRgba(item?.tone?.gradientEnd, 0.28),
+  '--server-ring-glow-soft': hexToRgba(item?.tone?.gradientStart, 0.18),
+  '--server-ring-shadow-soft': hexToRgba(item?.tone?.gradientEnd, 0.18),
+  '--server-metric-highlight': hexToRgba(item?.tone?.gradientStart, 0.1),
+})
 
 const buildUsageTone = usage => {
   if (usage >= 85) return { text: 'text-ui-error' }
@@ -495,7 +538,7 @@ const setSlideRef = (el, index) => {
 }
 
 const getSlideStyle = index => slideMotionStyles.value[index] || {
-  transform: 'scale(0.94)',
+  transform: 'perspective(1400px) translate3d(0, 10px, 0) scale(0.94)',
   opacity: '0.62',
 }
 
@@ -516,11 +559,15 @@ const updateCarouselMotion = () => {
     const slideCenter = slideRect.left + slideRect.width / 2
     const distance = Math.abs(slideCenter - center)
     const ratio = Math.min(1, distance / Math.max(rect.width * 0.52, 1))
+    const signedRatio = Math.max(-1, Math.min(1, (slideCenter - center) / Math.max(rect.width * 0.52, 1)))
     const scale = 1 - ratio * 0.06
     const opacity = 1 - ratio * 0.42
+    const rotateY = signedRatio * -8
+    const translateY = ratio * 10
+    const translateZ = (1 - ratio) * 22
 
     styles[index] = {
-      transform: `scale(${scale.toFixed(3)})`,
+      transform: `perspective(1400px) translate3d(0, ${translateY.toFixed(1)}px, ${translateZ.toFixed(1)}px) rotateY(${rotateY.toFixed(2)}deg) scale(${scale.toFixed(3)})`,
       opacity: opacity.toFixed(3),
     }
 
@@ -900,6 +947,8 @@ onUnmounted(() => {
   touch-action: pan-x pinch-zoom;
   overscroll-behavior-x: contain;
   padding: 6px 2px 10px;
+  perspective: 1800px;
+  perspective-origin: center center;
 }
 
 .server-carousel::-webkit-scrollbar {
@@ -915,6 +964,7 @@ onUnmounted(() => {
   transition: transform 260ms ease, opacity 260ms ease, box-shadow 260ms ease;
   will-change: transform, opacity;
   cursor: pointer;
+  transform-style: preserve-3d;
 }
 
 .server-slide.is-active {
@@ -927,6 +977,146 @@ onUnmounted(() => {
 
 .dashboard-detail-panel :deep(.el-select) {
   display: none !important;
+}
+
+.server-status-card {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  transform-style: preserve-3d;
+}
+
+.server-status-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 24% 18%, rgba(255, 255, 255, 0.88), transparent 34%),
+    radial-gradient(circle at 76% 84%, var(--server-ring-glow-soft, rgba(72, 187, 120, 0.18)), transparent 34%);
+  opacity: 0.88;
+  pointer-events: none;
+}
+
+.server-status-card > * {
+  position: relative;
+  z-index: 1;
+}
+
+.server-health-stage {
+  position: relative;
+  display: flex;
+  min-height: 236px;
+  align-items: center;
+  justify-content: center;
+  isolation: isolate;
+  transform-style: preserve-3d;
+}
+
+.server-health-shadow {
+  position: absolute;
+  bottom: 18px;
+  width: 146px;
+  height: 34px;
+  border-radius: 999px;
+  background: radial-gradient(
+    circle at 50% 50%,
+    var(--server-ring-glow, rgba(72, 187, 120, 0.28)) 0%,
+    rgba(15, 23, 42, 0.18) 36%,
+    transparent 76%
+  );
+  filter: blur(14px);
+  opacity: 0.72;
+  transform: translateZ(-22px) scaleX(0.92);
+}
+
+.server-health-aura {
+  position: absolute;
+  inset: 22px;
+  border-radius: 999px;
+  background: radial-gradient(circle, var(--server-ring-glow-soft, rgba(72, 187, 120, 0.18)) 0%, transparent 70%);
+  filter: blur(4px);
+  opacity: 0.88;
+  transform: translateZ(2px) scale(1.04);
+}
+
+.server-health-plate {
+  position: absolute;
+  inset: 28px;
+  border-radius: 999px;
+  background: radial-gradient(
+    circle at 32% 30%,
+    rgba(255, 255, 255, 0.98) 0%,
+    rgba(255, 255, 255, 0.88) 28%,
+    rgba(248, 250, 252, 0.95) 58%,
+    rgba(226, 232, 240, 0.96) 100%
+  );
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, 0.95),
+    inset 0 -14px 26px rgba(148, 163, 184, 0.18),
+    0 18px 30px -22px rgba(15, 23, 42, 0.4),
+    0 0 0 1px rgba(255, 255, 255, 0.92);
+  transform: translateZ(4px);
+}
+
+.server-health-reflection {
+  position: absolute;
+  top: 34px;
+  left: 52px;
+  width: 94px;
+  height: 38px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(255, 255, 255, 0));
+  opacity: 0.85;
+  transform: translateZ(12px) rotate(-14deg);
+}
+
+.server-health-ring {
+  position: relative;
+  z-index: 2;
+  filter:
+    drop-shadow(0 16px 18px var(--server-ring-shadow-soft, rgba(72, 187, 120, 0.18)))
+    drop-shadow(0 4px 8px rgba(255, 255, 255, 0.78));
+  transform: rotateX(18deg) translateZ(10px);
+}
+
+.server-health-value {
+  position: absolute;
+  z-index: 3;
+  display: flex;
+  min-width: 128px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 18px 24px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(255, 255, 255, 0.58));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.82),
+    0 18px 24px -22px rgba(15, 23, 42, 0.35);
+  backdrop-filter: blur(10px);
+  transform: translateZ(20px);
+}
+
+.server-health-score {
+  line-height: 1;
+  letter-spacing: -0.04em;
+  text-shadow: 0 10px 20px rgba(255, 255, 255, 0.34);
+}
+
+.server-health-caption {
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.42);
+}
+
+.server-metric-card {
+  position: relative;
+  border-color: transparent;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.92)),
+    radial-gradient(circle at 18% 18%, var(--server-metric-highlight, rgba(255, 255, 255, 0.1)), transparent 44%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.88),
+    0 16px 24px -24px rgba(15, 23, 42, 0.3);
+  transform: translateZ(8px);
 }
 
 .server-dot {
@@ -954,5 +1144,21 @@ onUnmounted(() => {
 .custom-scrollbar::-webkit-scrollbar-thumb {
   background-color: #cbd5e0;
   border-radius: 3px;
+}
+
+@media (max-width: 768px) {
+  .server-health-stage {
+    min-height: 216px;
+  }
+
+  .server-health-value {
+    min-width: 118px;
+    padding: 16px 22px;
+  }
+
+  .server-health-reflection {
+    left: 46px;
+    width: 84px;
+  }
 }
 </style>

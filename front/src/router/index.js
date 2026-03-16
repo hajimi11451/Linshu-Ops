@@ -7,6 +7,7 @@ import DiagnosisView from '../views/DiagnosisView.vue'
 import InfoListView from '../views/InfoListView.vue'
 import InfoDetailView from '../views/InfoDetailView.vue'
 import OpsAssistantView from '../views/OpsAssistantView.vue'
+import AutoExecutionView from '../views/AutoExecutionView.vue'
 import AlertSettingsView from '../views/AlertSettingsView.vue'
 
 const router = createRouter({
@@ -52,6 +53,14 @@ const router = createRouter({
           component: OpsAssistantView,
           meta: {
             title: '灵枢助手',
+          },
+        },
+        {
+          path: '/auto-execution',
+          name: 'auto-execution',
+          component: AutoExecutionView,
+          meta: {
+            title: '智能处置记录',
           },
         },
         {

@@ -512,7 +512,7 @@ const cancelRiskExecute = async msg => {
 const confirmContinue = async msg => {
   if (msg.handled) return
   msg.handled = true
-  
+
   if (!connected.value || !ws.value) {
     await appendMessage('assistant', 'WebSocket 未连接，无法继续执行。')
     return
@@ -520,8 +520,7 @@ const confirmContinue = async msg => {
 
   await appendMessage('user', '继续')
   await appendMessage('assistant', '收到，正在继续执行中...')
-  
-  // 发送“继续”指令，后端会根据历史上下文恢复
+
   const payload = {
     type: 'ops_chat',
     query: '继续',
@@ -531,7 +530,7 @@ const confirmContinue = async msg => {
     password: password.value,
     maxRounds: Math.min(50, Math.max(1, Number(maxRounds.value) || 15)),
   }
-  
+
   ws.value.send(JSON.stringify(payload))
   isAgentRunning.value = true
 }
@@ -702,7 +701,7 @@ const formatProgressForUser = data => {
 }
 
 const humanLikeDelay = () => {
-  const delay = Math.floor(Math.random() * 401) + 100 // 100ms ~ 500ms
+  const delay = Math.floor(Math.random() * 401) + 100
   return new Promise(resolve => setTimeout(resolve, delay))
 }
 

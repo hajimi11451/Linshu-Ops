@@ -47,6 +47,17 @@
         </router-link>
 
         <router-link
+          to="/auto-execution"
+          class="group flex items-center px-6 py-3 transition-colors border-l-4"
+          :class="$route.path === '/auto-execution' ? 'bg-dark border-brand text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-white border-transparent'"
+        >
+          <svg class="mr-3 h-5 w-5" :class="$route.path === '/auto-execution' ? 'text-brand' : 'group-hover:text-gray-300'" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6M7 4h10a2 2 0 012 2v12a2 2 0 01-2 2H7a2 2 0 01-2-2V6a2 2 0 012-2z" />
+          </svg>
+          <span class="text-sm" :class="{ 'font-semibold': $route.path === '/auto-execution' }">智能处置记录</span>
+        </router-link>
+
+        <router-link
           to="/info-list"
           class="group flex items-center px-6 py-3 transition-colors border-l-4"
           :class="$route.path.startsWith('/info-list') ? 'bg-dark border-brand text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-white border-transparent'"

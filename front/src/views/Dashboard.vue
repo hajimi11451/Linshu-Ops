@@ -123,44 +123,25 @@
                           </span>
                         </div>
 
-                        <div class="server-health-stage my-1.5">
-                          <span class="server-health-shadow" aria-hidden="true"></span>
-                          <span class="server-health-aura" aria-hidden="true"></span>
-                          <span class="server-health-plate" aria-hidden="true"></span>
-                          <span class="server-health-reflection" aria-hidden="true"></span>
-
-                          <svg class="server-health-ring h-[132px] w-[132px] -rotate-90" viewBox="0 0 160 160" aria-hidden="true">
-                            <defs>
-                              <linearGradient :id="`server-card-gradient-${index}`" x1="0%" y1="0%" x2="100%" y2="0%">
-                                <stop offset="0%" :stop-color="item.tone.gradientStart" />
-                                <stop offset="100%" :stop-color="item.tone.gradientEnd" />
-                              </linearGradient>
-                              <radialGradient :id="`server-card-center-${index}`" cx="32%" cy="28%" r="76%">
-                                <stop offset="0%" stop-color="#ffffff" />
-                                <stop offset="54%" stop-color="#f8fafc" />
-                                <stop offset="100%" stop-color="#e2e8f0" />
-                              </radialGradient>
-                            </defs>
-
-                            <circle cx="80" cy="80" r="58" :fill="`url(#server-card-center-${index})`" />
-                            <circle cx="80" cy="80" r="58" fill="none" stroke="rgba(255, 255, 255, 0.8)" stroke-width="1.5" />
-                            <circle cx="80" cy="80" r="52" fill="none" :stroke="item.tone.track" stroke-width="12" />
-                            <circle
-                              cx="80"
-                              cy="80"
-                              r="52"
-                              fill="none"
-                              :stroke="`url(#server-card-gradient-${index})`"
-                              stroke-width="12"
-                              stroke-linecap="round"
-                              :stroke-dasharray="cardRingCircumference"
-                              :stroke-dashoffset="getCardRingOffset(item.health.score)"
-                            />
-                          </svg>
-
-                          <div class="server-health-value">
-                            <div class="server-health-score text-[24px] font-bold" :class="item.tone.text">{{ item.health.score }}%</div>
-                            <div class="server-health-caption mt-1 text-[11px] font-medium" :class="item.tone.softText">系统健康度</div>
+                        <div class="server-health-stage my-1.5 flex justify-center">
+                          <div class="liquid-sphere-wrapper" :style="{
+                            '--color-start': item.tone.gradientStart,
+                            '--color-end': item.tone.gradientEnd,
+                            '--fill-level': item.health.score + '%'
+                          }">
+                            <div class="liquid-sphere">
+                              <div class="liquid-level">
+                                <div class="wave wave-back"></div>
+                                <div class="wave wave-front"></div>
+                              </div>
+                              <div class="sphere-glare"></div>
+                              <div class="sphere-shadow"></div>
+                              
+                              <div class="server-health-value-sphere">
+                                <div class="text-[26px] font-bold">{{ item.health.score }}%</div>
+                                <div class="mt-1 text-[11px] font-medium ">系统健康度</div>
+                              </div>
+                            </div>
                           </div>
                         </div>
 
@@ -590,13 +571,6 @@ const averageScoreTone = computed(() => {
   if (dashboardStats.value.averageScore >= 60) return toneMap.warning
   return toneMap.error
 })
-
-const cardRingRadius = 52
-const cardRingCircumference = Number((2 * Math.PI * cardRingRadius).toFixed(2))
-
-const getCardRingOffset = score => Number(
-  (cardRingCircumference * (1 - Math.max(0, Math.min(score, 100)) / 100)).toFixed(2),
-)
 
 const setSlideRef = (el, index) => {
   slideElements.value[index] = el
@@ -1057,7 +1031,6 @@ onUnmounted(() => {
   display: none !important;
 }
 
-/* 彻底清理了卡片硬编码的浑浊色调，由 global glass-card 继承，这里只保留动画必须的属性 */
 .server-status-card {
   position: relative;
   overflow: hidden;
@@ -1089,99 +1062,127 @@ onUnmounted(() => {
   transform-style: preserve-3d;
 }
 
-.server-health-shadow {
-  position: absolute;
-  bottom: 8px;
-  width: 112px;
-  height: 20px;
-  border-radius: 999px;
-  background: radial-gradient(
-    circle at 50% 50%,
-    var(--server-ring-glow, rgba(72, 187, 120, 0.28)) 0%,
-    rgba(15, 23, 42, 0.18) 36%,
-    transparent 76%
-  );
-  filter: blur(14px);
-  opacity: 0.72;
-  transform: translateZ(-22px) scaleX(0.92);
-}
+/* --- 360度液态球体样式 --- */
 
-.server-health-aura {
-  position: absolute;
-  inset: 26px;
-  border-radius: 999px;
-  background: radial-gradient(circle, var(--server-ring-glow-soft, rgba(72, 187, 120, 0.18)) 0%, transparent 70%);
-  filter: blur(4px);
-  opacity: 0.88;
-  transform: translateZ(2px) scale(1.04);
-}
-
-.server-health-plate {
-  position: absolute;
-  inset: 36px;
-  border-radius: 999px;
-  background: radial-gradient(
-    circle at 32% 30%,
-    rgba(255, 255, 255, 0.98) 0%,
-    rgba(255, 255, 255, 0.88) 28%,
-    rgba(248, 250, 252, 0.95) 58%,
-    rgba(226, 232, 240, 0.96) 100%
-  );
-  box-shadow:
-    inset 0 2px 0 rgba(255, 255, 255, 0.95),
-    inset 0 -14px 26px rgba(148, 163, 184, 0.18),
-    0 18px 30px -22px rgba(15, 23, 42, 0.4),
-    0 0 0 1px rgba(255, 255, 255, 0.92);
-  transform: translateZ(4px);
-}
-
-.server-health-reflection {
-  position: absolute;
-  top: 40px;
-  left: 61px;
-  width: 62px;
-  height: 24px;
-  border-radius: 999px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(255, 255, 255, 0));
-  opacity: 0.85;
-  transform: translateZ(12px) rotate(-14deg);
-}
-
-.server-health-ring {
+.liquid-sphere-wrapper {
   position: relative;
-  z-index: 2;
-  filter:
-    drop-shadow(0 12px 16px var(--server-ring-shadow-soft, rgba(72, 187, 120, 0.18)))
-    drop-shadow(0 4px 8px rgba(255, 255, 255, 0.78));
-  transform: rotateX(18deg) translateZ(8px);
+  width: 140px;
+  height: 140px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.server-health-value {
+.liquid-sphere-wrapper::before {
+  content: '';
   position: absolute;
+  inset: -10px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 50%, var(--color-start) 0%, transparent 65%);
+  opacity: 0.25;
+  z-index: 0;
+  filter: blur(12px);
+}
+
+.liquid-sphere {
+  position: relative;
+  width: 132px;
+  height: 132px;
+  border-radius: 50%;
+  background: linear-gradient(
+    160deg,
+    rgba(226, 238, 255, 0.34) 0%,
+    rgba(207, 226, 255, 0.22) 48%,
+    rgba(185, 211, 248, 0.16) 100%
+  );
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow:
+    inset 0 0 24px rgba(226, 238, 255, 0.52),
+    inset 0 -14px 30px rgba(15, 23, 42, 0.12),
+    0 8px 24px rgba(37, 99, 235, 0.08),
+    0 0 0 1px rgba(207, 226, 255, 0.46);
+  overflow: hidden;
+  z-index: 1;
+  isolation: isolate;
+  transform: translateZ(8px);
+}
+
+.liquid-level {
+  position: absolute;
+  width: 280px;  
+  height: 280px;
+  left: 50%;
+  top: calc(100% - var(--fill-level) + 12px);
+  transform: translateX(-50%);
+  transition: top 1s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 1;
+}
+
+.wave {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  border-radius: 41%;
+  left: 0;
+  top: 0;
+  transform-origin: 50% 50%;
+}
+
+.wave-back {
+  background: var(--color-start);
+  opacity: 0.5;
+  animation: liquid-spin 6s linear infinite;
+}
+
+.wave-front {
+  background: linear-gradient(180deg, var(--color-start) 0%, var(--color-end) 100%);
+  opacity: 0.85;
+  animation: liquid-spin 4.5s linear infinite;
+  border-radius: 43%; 
+}
+
+@keyframes liquid-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.sphere-glare {
+  position: absolute;
+  top: 4px;
+  left: 10%;
+  width: 80%;
+  height: 35%;
+  border-radius: 50%;
+  background: linear-gradient(180deg, rgba(226, 238, 255, 0.76), rgba(226, 238, 255, 0));
+  z-index: 2;
+  pointer-events: none;
+}
+
+.sphere-shadow {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  box-shadow:
+    inset 0 -15px 25px rgba(15, 23, 42, 0.15),
+    inset 0 1px 0 rgba(219, 234, 254, 0.34);
+  z-index: 2;
+  pointer-events: none;
+}
+
+.server-health-value-sphere {
+  position: absolute;
+  inset: 0;
   z-index: 3;
   display: flex;
-  min-width: 96px;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 10px 12px;
-  border-radius: 999px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0.46));
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.82),
-    0 18px 24px -22px rgba(15, 23, 42, 0.35);
-  backdrop-filter: blur(10px);
-  transform: translateZ(12px);
-}
-
-.server-health-score {
-  line-height: 1;
-  letter-spacing: -0.04em;
-  text-shadow: 0 10px 20px rgba(255, 255, 255, 0.34);
-}
-
-.server-health-caption {
-  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.42);
+  pointer-events: none;
+  color: rgb(91, 91, 91);
+  text-shadow:
+    0 6px 18px rgba(15, 23, 42, 0.18),
+    0 0 14px rgba(219, 234, 254, 0.14);
 }
 
 /* 清理了硬编码渐变，由 glass-soft 接管 */
@@ -1232,17 +1233,5 @@ onUnmounted(() => {
   .server-health-stage {
     min-height: 154px;
   }
-
-  .server-health-value {
-    min-width: 90px;
-    padding: 9px 11px;
-  }
-
-  .server-health-reflection {
-    left: 55px;
-    width: 56px;
-  }
 }
 </style>
-
-

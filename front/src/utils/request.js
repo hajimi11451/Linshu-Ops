@@ -34,6 +34,12 @@ request.interceptors.response.use(
         return Promise.reject(err)
       }
     }
+    if (error.request && !error.response) {
+      const err = new Error('无法连接后端服务，请确认接口已启动')
+      err.code = 'NETWORK_ERROR'
+      console.error('Request Error:', err.message)
+      return Promise.reject(err)
+    }
     console.error('Request Error:', error)
     return Promise.reject(error)
   }

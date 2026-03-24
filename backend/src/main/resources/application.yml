@@ -33,7 +33,7 @@ qianfan:
     # 千帆 OpenAI 兼容接口地址（固定到 v2）
     base-url: https://qianfan.baidubce.com/v2
     # 鉴权 Token
-    token: 
+    token:
     # 日志审核/日志分析使用的模型
     audit-model-name: glm-4.7
     # 聊天助手（含命令规划）使用的模型
@@ -47,7 +47,7 @@ monitor:
 
 alert:
   schedule:
-    fixed-rate: 120000
+    fixed-rate: 120000 
   recheck:
     lookback-minutes: 20
   mail:

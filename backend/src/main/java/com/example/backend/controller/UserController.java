@@ -29,10 +29,14 @@ public class UserController {
             response.put("code", 200);
             response.put("msg", res);
             return ResponseEntity.ok(response);
-        }else {
-            response.put("code", 401);
+        } else if (res.equals("用户名已存在")) {
+            response.put("code", 409);
             response.put("msg", res);
-            return ResponseEntity.status(401).body(response);
+            return ResponseEntity.status(409).body(response);
+        } else {
+            response.put("code", 400);
+            response.put("msg", res);
+            return ResponseEntity.badRequest().body(response);
         }
 
     }
@@ -47,10 +51,14 @@ public class UserController {
             response.put("code", 200);
             response.put("msg", res);
             return ResponseEntity.ok(response);
-        }else {
+        } else if (res.equals("用户名或密码错误")) {
             response.put("code", 401);
             response.put("msg", res);
             return ResponseEntity.status(401).body(response);
+        } else {
+            response.put("code", 400);
+            response.put("msg", res);
+            return ResponseEntity.badRequest().body(response);
         }
     }
 

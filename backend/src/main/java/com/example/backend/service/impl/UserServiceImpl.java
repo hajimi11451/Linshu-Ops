@@ -21,12 +21,19 @@ public class UserServiceImpl implements UserService {
     public String login(Map<String, String> request) {
         String username = request.get("username");
         String password = request.get("password");
+        username = StringUtils.hasText(username) ? username.trim() : null;
+        password = StringUtils.hasText(password) ? password : null;
+
+        if (!StringUtils.hasText(username) || !StringUtils.hasText(password)) {
+            return "用户名和密码不能为空";
+        }
+
         QueryWrapper<UserLogin> queryWrapper = new QueryWrapper<>();
         queryWrapper.eq("username", username);
         queryWrapper.eq("password", password);
         UserLogin user = userLoginMapper.selectOne(queryWrapper);
         if (user == null) {
-            return "登录失败";
+            return "用户名或密码错误";
         }
         return "登录成功";
     }
@@ -36,16 +43,24 @@ public class UserServiceImpl implements UserService {
         String username = request.get("username");
         String password = request.get("password");
         String email = request.get("email");
+        username = StringUtils.hasText(username) ? username.trim() : null;
+        password = StringUtils.hasText(password) ? password : null;
+        email = StringUtils.hasText(email) ? email.trim() : null;
+
+        if (!StringUtils.hasText(username) || !StringUtils.hasText(password)) {
+            return "用户名和密码不能为空";
+        }
+
         QueryWrapper<UserLogin> queryWrapper = new QueryWrapper<>();
         queryWrapper.eq("username", username);
         UserLogin user = userLoginMapper.selectOne(queryWrapper);
         if (user != null) {
-            return "注册失败";
+            return "用户名已存在";
         }
         UserLogin newUser = new UserLogin();
         newUser.setUsername(username);
         newUser.setPassword(password);
-        newUser.setEmail(StringUtils.hasText(email) ? email.trim() : null);
+        newUser.setEmail(email);
         userLoginMapper.insert(newUser);
         return "注册成功";
     }

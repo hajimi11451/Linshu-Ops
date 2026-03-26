@@ -93,8 +93,58 @@ public class AiUtils {
     }
 
     public String chatWithOpsAssistant(String userQuery) {
+        return chatWithOpsAssistant(userQuery, null);
+    }
+
+    public String chatWithOpsAssistant(String userQuery, String extraInstruction) {
         String systemPrompt = "你是专业的运维聊天助手。优先给出可执行方案，并明确风险与回滚建议。";
+        if (StringUtils.hasText(extraInstruction)) {
+            systemPrompt += "\n附加要求：" + extraInstruction.trim();
+        }
         return callQianfanApi(systemPrompt, userQuery, chatModelName);
+    }
+
+    public Map<String, String> classifyOpsIntent(String userQuery, boolean hasConnection) {
+        Map<String, String> fallback = heuristicClassifyOpsIntent(userQuery, hasConnection);
+        if (!StringUtils.hasText(userQuery)) {
+            return fallback;
+        }
+
+        String systemPrompt = "你是运维请求分流助手。请判断用户这次输入更像是咨询提问，还是希望你直接在服务器上执行/检查/处理。"
+                + "只允许返回一个 JSON 对象，字段固定且只能包含 intent,reason,confidence。"
+                + "其中 intent 只能是 execute、chat、ambiguous 三个值。"
+                + "判定规则："
+                + "1. 只有在用户明确要求你去当前服务器检查、执行、修改、安装、重启、排查、处理时，才能返回 execute。"
+                + "2. 如果用户是在问原理、原因、区别、步骤、建议、命令写法、如何处理，通常返回 chat。"
+                + "3. 如果像“帮我看看”“查下”这类表述存在双重理解，就返回 ambiguous。"
+                + "4. 当前是否已经选了服务器连接只是背景信息，不能因为有连接就把普通提问判成 execute。"
+                + "5. reason 用一句中文短句说明判断依据，confidence 只能是 high、medium、low。"
+                + "输出示例：{\"intent\":\"chat\",\"reason\":\"用户在咨询处理思路，没有明确要求立即操作服务器。\",\"confidence\":\"high\"}";
+
+        String userPrompt = "当前是否有完整服务器连接信息: " + (hasConnection ? "是" : "否")
+                + "\n用户输入: " + userQuery;
+
+        try {
+            String response = callQianfanApi(systemPrompt, userPrompt, chatModelName);
+            JsonNode root = objectMapper.readTree(response.trim());
+            if (root.isObject()) {
+                String intent = normalizeIntent(root.path("intent").asText(""));
+                if (StringUtils.hasText(intent)) {
+                    Map<String, String> result = defaultIntentDecision();
+                    result.put("intent", intent);
+                    result.put("reason", sanitizeReason(root.path("reason").asText("")));
+                    result.put("confidence", normalizeConfidence(root.path("confidence").asText("")));
+                    if (!StringUtils.hasText(result.get("reason"))) {
+                        result.put("reason", fallback.get("reason"));
+                    }
+                    return result;
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to classify ops intent via AI, fallback to heuristic: {}", e.getMessage());
+        }
+
+        return fallback;
     }
 
     /**
@@ -252,6 +302,109 @@ public class AiUtils {
             // keep fallback shape
         }
         return result;
+    }
+
+    private Map<String, String> defaultIntentDecision() {
+        Map<String, String> result = new HashMap<>();
+        result.put("intent", "chat");
+        result.put("reason", "默认按咨询处理。");
+        result.put("confidence", "low");
+        return result;
+    }
+
+    private Map<String, String> heuristicClassifyOpsIntent(String userQuery, boolean hasConnection) {
+        Map<String, String> result = defaultIntentDecision();
+        String normalized = String.valueOf(userQuery == null ? "" : userQuery).trim().toLowerCase();
+        if (!StringUtils.hasText(normalized)) {
+            result.put("reason", "问题内容为空，默认按咨询处理。");
+            return result;
+        }
+
+        boolean strongExecute = containsAny(normalized,
+                "请执行", "帮我执行", "直接执行", "现在执行", "立刻执行", "到服务器", "上服务器",
+                "登录服务器", "当前服务器", "这台服务器", "这台机器", "机器上", "执行一下");
+        boolean questionLike = containsAny(normalized,
+                "什么", "为什么", "如何", "怎么", "介绍", "解释", "区别", "原理", "含义",
+                "建议", "方案", "思路", "怎么写", "如何写", "命令怎么", "命令如何");
+        boolean ambiguous = containsAny(normalized,
+                "帮我看看", "帮我看下", "帮我看一下", "看看", "看下", "查下", "查一下", "分析一下");
+        boolean operatorVerbStart = normalized.matches("^(检查|查看|排查|重启|重载|安装|卸载|启动|停止|修复|处理|清理|执行|部署|更新|回滚|拉取|诊断|登录).*");
+
+        if (strongExecute) {
+            result.put("intent", "execute");
+            result.put("reason", hasConnection
+                    ? "用户明确要求在服务器上执行或处理，按执行请求处理。"
+                    : "用户明确提出执行诉求，但当前未提供完整服务器连接。");
+            result.put("confidence", "medium");
+            return result;
+        }
+
+        if (operatorVerbStart && !questionLike) {
+            result.put("intent", "execute");
+            result.put("reason", "用户使用了明显的操作型动词开头，更像执行请求。");
+            result.put("confidence", "medium");
+            return result;
+        }
+
+        if (questionLike) {
+            result.put("intent", "chat");
+            result.put("reason", "用户更像是在咨询原因、方案或知识点，没有明确要求立即操作服务器。");
+            result.put("confidence", "medium");
+            return result;
+        }
+
+        if (ambiguous) {
+            result.put("intent", "ambiguous");
+            result.put("reason", hasConnection
+                    ? "表达里有“看看/查下”这类模糊表述，存在咨询和执行两种理解。"
+                    : "表达不够明确，先按咨询处理更安全。");
+            result.put("confidence", "low");
+            return result;
+        }
+
+        result.put("reason", "未识别到明确执行意图，默认按咨询处理。");
+        return result;
+    }
+
+    private boolean containsAny(String text, String... keywords) {
+        if (!StringUtils.hasText(text) || keywords == null) {
+            return false;
+        }
+        for (String keyword : keywords) {
+            if (StringUtils.hasText(keyword) && text.contains(keyword.toLowerCase())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private String normalizeIntent(String value) {
+        if (!StringUtils.hasText(value)) {
+            return "";
+        }
+        String normalized = value.trim().toLowerCase();
+        if ("execute".equals(normalized) || "chat".equals(normalized) || "ambiguous".equals(normalized)) {
+            return normalized;
+        }
+        return "";
+    }
+
+    private String normalizeConfidence(String value) {
+        if (!StringUtils.hasText(value)) {
+            return "low";
+        }
+        String normalized = value.trim().toLowerCase();
+        if ("high".equals(normalized) || "medium".equals(normalized) || "low".equals(normalized)) {
+            return normalized;
+        }
+        return "low";
+    }
+
+    private String sanitizeReason(String reason) {
+        if (!StringUtils.hasText(reason)) {
+            return "";
+        }
+        return reason.replaceAll("\\s+", " ").trim();
     }
 
     private List<Map<String, String>> parsePlanSteps(JsonNode planStepsNode) {

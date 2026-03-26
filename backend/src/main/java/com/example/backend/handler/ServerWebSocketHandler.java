@@ -113,24 +113,75 @@ public class ServerWebSocketHandler extends TextWebSocketHandler {
         String username = node.path("username").asText("");
         String password = node.path("password").asText("");
 
-        if (!execute) {
-            long start = System.currentTimeMillis();
-            log.info("ops_chat start, sessionId={}, execute=false, serverIp={}, queryLength={}, maxRounds={}",
-                    session.getId(), serverIp, query == null ? 0 : query.length(), maxRounds);
-            sendProgress(session, "start", "收到请求，开始进入 Agent 自主执行...", 0);
-            Map<String, Object> result = new HashMap<>();
-            result.put("type", "ops_chat_result");
-            result.put("query", query);
-            result.put("executed", false);
-            result.put("reply", "当前请求未开启执行模式（execute=false），未启动 Agent。");
-            result.put("execResult", "未执行。若要启动自主 Agent，请携带 execute=true。");
-            result.put("chartSuggest", false);
-            sendJson(session, result);
-            sendProgress(session, "finished", "流程结束", System.currentTimeMillis() - start);
+        submitSessionTask(session, "ops_chat",
+                () -> routeOpsChat(session, query, execute, maxRounds, serverIp, username, password));
+    }
+
+    private void routeOpsChat(WebSocketSession session,
+                              String query,
+                              boolean executeRequested,
+                              int maxRounds,
+                              String serverIp,
+                              String username,
+                              String password) {
+        long start = System.currentTimeMillis();
+        sendProgress(session, "start", "收到请求，开始分析问题...", 0);
+
+        if (isContinueQuery(query)) {
+            sendProgress(session, "intent_result", "识别到这是继续执行请求，我会直接恢复之前的任务。", System.currentTimeMillis() - start);
+            processOpsChat(session, query, maxRounds, serverIp, username, password);
             return;
         }
 
-        submitSessionTask(session, "ops_chat", () -> processOpsChat(session, query, maxRounds, serverIp, username, password));
+        boolean hasConnection = hasCompleteConnection(serverIp, username, password);
+        sendProgress(session, "intent_detecting", "我先判断这次更像是咨询还是执行请求。", System.currentTimeMillis() - start);
+        Map<String, String> intentDecision = aiUtils.classifyOpsIntent(query, hasConnection);
+        String intent = normalizeIntent(String.valueOf(intentDecision.get("intent")));
+        String reason = String.valueOf(intentDecision.getOrDefault("reason", ""));
+        sendProgress(session, "intent_result",
+                buildIntentResultMessage(intent, hasConnection, executeRequested, reason),
+                System.currentTimeMillis() - start);
+
+        if ("execute".equals(intent) && executeRequested && hasConnection) {
+            processOpsChat(session, query, maxRounds, serverIp, username, password);
+            return;
+        }
+
+        processChatOnly(
+                session,
+                query,
+                buildChatOnlyInstruction(intent, hasConnection),
+                buildChatOnlyExecResult(intent, hasConnection)
+        );
+    }
+
+    private void processChatOnly(WebSocketSession session,
+                                 String query,
+                                 String extraInstruction,
+                                 String execResultMessage) {
+        long start = System.currentTimeMillis();
+        log.info("ops_chat start, sessionId={}, chatOnly=true, queryLength={}",
+                session.getId(), query == null ? 0 : query.length());
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("type", "ops_chat_result");
+        result.put("query", query);
+        result.put("chatOnly", true);
+        result.put("executed", false);
+        result.put("chartSuggest", false);
+
+        try {
+            String answer = aiUtils.chatWithOpsAssistant(query, extraInstruction);
+            result.put("reply", answer);
+            result.put("execResult", execResultMessage);
+        } catch (Exception e) {
+            log.error("ops_chat chat-only failed, sessionId={}", session.getId(), e);
+            result.put("reply", "当前问题处理失败，请稍后重试。");
+            result.put("execResult", e.getMessage());
+        }
+
+        sendJson(session, result);
+        sendProgress(session, "finished", "流程结束", System.currentTimeMillis() - start);
     }
 
     private void processOpsChat(WebSocketSession session,
@@ -142,7 +193,6 @@ public class ServerWebSocketHandler extends TextWebSocketHandler {
         long start = System.currentTimeMillis();
         log.info("ops_chat start, sessionId={}, execute=true, serverIp={}, queryLength={}, maxRounds={}",
                 session.getId(), serverIp, query == null ? 0 : query.length(), maxRounds);
-        sendProgress(session, "start", "收到请求，开始进入 Agent 自主执行...", 0);
 
         Map<String, Object> result = new HashMap<>();
         result.put("type", "ops_chat_result");
@@ -274,6 +324,79 @@ public class ServerWebSocketHandler extends TextWebSocketHandler {
         sendJson(session, result);
         sendProgress(session, "finished", "流程结束", System.currentTimeMillis() - start);
         log.info("ops_chat finished, sessionId={}, totalElapsedMs={}", session.getId(), System.currentTimeMillis() - start);
+    }
+
+    private boolean hasCompleteConnection(String serverIp, String username, String password) {
+        return StringUtils.hasText(serverIp) && StringUtils.hasText(username) && StringUtils.hasText(password);
+    }
+
+    private boolean isContinueQuery(String query) {
+        return "继续".equals(query) || "continue".equalsIgnoreCase(query);
+    }
+
+    private String normalizeIntent(String intent) {
+        if (!StringUtils.hasText(intent)) {
+            return "chat";
+        }
+        String normalized = intent.trim().toLowerCase();
+        if ("execute".equals(normalized) || "ambiguous".equals(normalized) || "chat".equals(normalized)) {
+            return normalized;
+        }
+        return "chat";
+    }
+
+    private String buildIntentResultMessage(String intent,
+                                            boolean hasConnection,
+                                            boolean executeRequested,
+                                            String reason) {
+        String normalizedReason = StringUtils.hasText(reason) ? reason.trim() : "";
+
+        if ("execute".equals(intent) && executeRequested && hasConnection) {
+            return appendIntentReason("判断结果：这是执行请求，我会先整理执行计划，再开始实际处理。", normalizedReason);
+        }
+        if ("execute".equals(intent)) {
+            return appendIntentReason("判断结果：这是执行请求，但当前无法直接执行，我先给你处理方案，不操作服务器。", normalizedReason);
+        }
+        if ("ambiguous".equals(intent)) {
+            return appendIntentReason("判断结果：这次表达还有些模糊，我先按咨询处理，不直接操作服务器。", normalizedReason);
+        }
+        return appendIntentReason("判断结果：这次更像是在咨询或提问，我会直接回答，不操作服务器。", normalizedReason);
+    }
+
+    private String appendIntentReason(String prefix, String reason) {
+        if (!StringUtils.hasText(reason)) {
+            return prefix;
+        }
+        return prefix + " " + reason;
+    }
+
+    private String buildChatOnlyInstruction(String intent, boolean hasConnection) {
+        if ("execute".equals(intent) && !hasConnection) {
+            return "这次更像是执行型请求，但当前没有完整的服务器连接信息。不要假装已经执行。"
+                    + "请直接给出可落地的排查/处理方案、推荐命令、风险和回滚建议，并提醒用户补充连接后可以再执行。";
+        }
+        if ("ambiguous".equals(intent)) {
+            return "这次用户表达存在歧义，默认按咨询处理。不要假装已经执行服务器操作。"
+                    + "先给出分析和建议，并在结尾简短提醒：如果需要你直接动服务器，可以明确说“请执行/请检查当前服务器…”。";
+        }
+        if (hasConnection) {
+            return "虽然当前已经选择了服务器连接，但这次问题判断为咨询型问题。"
+                    + "请直接回答，不要假装已经登录服务器、查看日志或执行命令。";
+        }
+        return "当前按纯问答处理。不要假装已经登录服务器或执行命令；如需举例命令，请明确说明那只是建议。";
+    }
+
+    private String buildChatOnlyExecResult(String intent, boolean hasConnection) {
+        if ("execute".equals(intent) && !hasConnection) {
+            return "判断为执行请求，但缺少完整连接信息，未执行服务器操作。";
+        }
+        if ("ambiguous".equals(intent)) {
+            return "执行意图不够明确，已按咨询处理，未执行服务器操作。";
+        }
+        if (hasConnection) {
+            return "判断为咨询问题，未执行服务器操作。";
+        }
+        return "当前没有服务器连接，已按纯问答处理。";
     }
 
     private void handleOpsForceStop(WebSocketSession session, JsonNode node) {

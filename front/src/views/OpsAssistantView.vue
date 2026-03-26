@@ -33,14 +33,13 @@
           />
         </el-select>
       </div>
-      <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
         <el-input v-model="serverIp" placeholder="服务器 IP" />
         <el-input v-model="username" placeholder="账号" />
         <el-input v-model="password" type="password" show-password placeholder="密码" />
-        <el-checkbox v-model="execute">允许执行</el-checkbox>
         <el-input-number v-model="maxRounds" :min="1" :max="50" controls-position="right" placeholder="最大轮数" />
       </div>
-      <p class="text-xs text-ui-subtext mt-3">默认只规划；勾选后通过 SSH 执行。</p>
+      <p class="text-xs text-ui-subtext mt-3">已启用自动模式：即使填写了连接，也会先判断是咨询还是执行；只有明确是执行请求时才操作服务器。</p>
     </el-card>
 
     <el-card class="assistant-shell-card glass-card rounded-[34px]" :body-style="{ padding: '20px' }">
@@ -185,7 +184,7 @@ const connected = ref(false)
 const serverIp = ref('')
 const username = ref('')
 const password = ref('')
-const execute = ref(false)
+const execute = ref(true)
 const maxRounds = ref(15)
 const isAgentRunning = ref(false)
 const selectedSavedConnection = ref('')
@@ -379,10 +378,14 @@ const clearPendingTask = async () => {
   }
 }
 
+const hasCompleteConnection = () => {
+  return Boolean(serverIp.value && username.value && password.value)
+}
+
 const tryApplyPendingConnection = pendingTask => {
   const targetIp = String(pendingTask?.serverIp || '').trim()
   if (!targetIp) {
-    return Boolean(serverIp.value && username.value && password.value)
+    return hasCompleteConnection()
   }
 
   const matched = savedConnections.value.find(item => isSameServerEndpoint(item.serverIp, targetIp))
@@ -411,17 +414,15 @@ const maybeRunPendingTask = async () => {
 
   const canExecute = tryApplyPendingConnection(pendingTask)
   input.value = String(pendingTask.query || '').trim()
-  const requestedExecute = Boolean(pendingTask.autoExecute)
-  execute.value = requestedExecute
 
   if (!input.value) {
     await clearPendingTask()
     return
   }
 
-  if (!canExecute && requestedExecute) {
-    execute.value = false
-    await appendMessage('assistant', '未找到与该告警匹配的服务器连接，已自动切换为规划模式；如需直接执行，请先选择或补全连接。')
+  if (!canExecute) {
+    await appendMessage('assistant', '未找到与该告警匹配的服务器连接，请先选择或补全连接信息后再执行。')
+    return
   }
 
   const started = await sendMessage(input.value)
@@ -609,11 +610,13 @@ const sendMessage = async presetText => {
   lastTaskDoneDigest.value = ''
   lastTaskFailedDigest.value = ''
   stepTitleMap.value = {}
+  const shouldExecute = hasCompleteConnection()
+  execute.value = shouldExecute
 
   const payload = {
     type: 'ops_chat',
     query: text,
-    execute: execute.value,
+    execute: shouldExecute,
     serverIp: serverIp.value,
     username: username.value,
     password: password.value,
@@ -622,7 +625,7 @@ const sendMessage = async presetText => {
 
   try {
     await appendMessage('user', text)
-    await appendMessage('assistant', execute.value ? '收到，正在执行中...' : '收到，正在处理中...')
+    await appendMessage('assistant', '收到，我先分析一下你的请求。')
     ws.value.send(JSON.stringify(payload))
     input.value = ''
     return true
@@ -844,6 +847,10 @@ const formatOpsResult = data => {
     lines.push(data.executed ? '处理完成。' : '我已整理好处理建议。')
   }
 
+  if (data.chatOnly) {
+    return lines.join('\n\n')
+  }
+
   if (data.executed) {
     const execResult = toUserFriendlyText(data.execResult)
     if (execResult && !isGenericExecResult(execResult)) {
@@ -993,6 +1000,9 @@ const formatProgressForUser = data => {
   }
   if (stage === 'planning') {
     return '我先分析目标，整理执行计划。'
+  }
+  if (stage === 'intent_detecting' || stage === 'intent_result') {
+    return ''
   }
   if (stage === 'cmd_exec_start') {
     if (!message) {

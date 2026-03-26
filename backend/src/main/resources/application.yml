@@ -35,9 +35,9 @@ qianfan:
     # 鉴权 Token
     token: 
     # 日志审核/日志分析使用的模型
-    audit-model-name: glm-4.7
+    audit-model-name: qwen3.5-27b
     # 聊天助手（含命令规划）使用的模型
-    chat-model-name: glm-4.7
+    chat-model-name: minimax-m2.5
     # AI 接口读取超时时间（单位：秒）
     read-timeout-seconds: 120
 

@@ -3,20 +3,67 @@
     <div class="flex items-center justify-between mb-6">
       <div class="flex items-center gap-3">
         <h2 class="text-xl font-bold text-ui-text">告警记录</h2>
-        <span class="text-sm text-ui-subtext">共 {{ total }} 条记录</span>
+        <span class="text-sm text-ui-subtext">{{ recordSummaryText }}</span>
       </div>
       <div class="flex items-center gap-2">
         <el-button @click="goDashboard">回到总览</el-button>
         <el-button
           type="danger"
           :loading="clearing"
-          :disabled="loading || total === 0 || clearing"
+          :disabled="loading || overallTotal === 0 || clearing"
           @click="handleClearAll"
         >
           清空记录
         </el-button>
       </div>
     </div>
+
+    <el-card
+      class="alert-shell-card glass-card rounded-[34px]"
+      :body-style="{ padding: '20px' }"
+    >
+      <div class="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,320px)_auto] md:items-center">
+        <div>
+          <!-- <div class="mb-2 text-sm font-medium text-ui-text">服务器 IP 筛选</div> -->
+          <el-select
+            v-model="filters.serverIp"
+            class="w-full"
+            clearable
+            filterable
+            :loading="configLoading"
+            placeholder="选择服务器 IP"
+            no-data-text="当前用户暂无可选服务器 IP"
+          >
+            <el-option
+              v-for="serverIp in serverIpOptions"
+              :key="serverIp"
+              :label="serverIp"
+              :value="serverIp"
+            />
+          </el-select>
+          <!-- <div class="mt-2 text-xs text-ui-subtext">
+            可选项来自当前用户在 componentconfig 中配置的服务器。
+          </div> -->
+        </div>
+
+      <div class="flex items-center gap-2 md:justify-end">
+        <el-button :disabled="!filters.serverIp" @click="resetFilters">
+          重置筛选
+        </el-button>
+        <el-button
+          type="warning"
+          :loading="deletingServerIp"
+          :disabled="!filters.serverIp || deletingServerIp || loading || clearing"
+          @click="handleDeleteServerIp"
+        >
+          删除该 IP 告警
+        </el-button>
+        <el-button type="primary" :loading="loading || configLoading" @click="refreshPage">
+          刷新
+        </el-button>
+      </div>
+      </div>
+    </el-card>
 
     <el-card
       class="alert-shell-card glass-card rounded-[34px]"
@@ -30,7 +77,7 @@
           stripe
           v-loading="loading"
         >
-          <el-table-column prop="createdAt" label="时间" min-width="180">
+          <el-table-column prop="createdAt" label="时间" min-width="180" >
             <template #default="{ row }">
               {{ formatDate(row.createdAt) }}
             </template>
@@ -112,28 +159,65 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { selectAllInfo, deleteAllInfo } from '../api/info'
+import { selectAllInfo, deleteAllInfo, deleteInfoByServerIp } from '../api/info'
+import { listConfigs } from '../api/diagnosis'
 
 const router = useRouter()
 const infoList = ref([])
 const loading = ref(false)
 const clearing = ref(false)
+const deletingServerIp = ref(false)
+const configLoading = ref(false)
 const pageSize = 10
 const currentPage = ref(1)
+const componentConfigs = ref([])
+const filters = ref({
+  serverIp: '',
+})
 
 const sortedList = computed(() => {
   const list = [...infoList.value]
   return list.sort((a, b) => parseDateToTime(b.createdAt) - parseDateToTime(a.createdAt))
 })
 
-const total = computed(() => sortedList.value.length)
+const serverIpOptions = computed(() => {
+  const uniqueServerIps = new Set()
+
+  componentConfigs.value.forEach(item => {
+    const serverIp = String(item?.serverIp || '').trim()
+    if (serverIp) {
+      uniqueServerIps.add(serverIp)
+    }
+  })
+
+  return Array.from(uniqueServerIps).sort((a, b) => a.localeCompare(b))
+})
+
+const filteredList = computed(() => {
+  const selectedServerIp = String(filters.value.serverIp || '').trim()
+  if (!selectedServerIp) {
+    return sortedList.value
+  }
+
+  return sortedList.value.filter(item => String(item?.serverIp || '').trim() === selectedServerIp)
+})
+
+const total = computed(() => filteredList.value.length)
+
+const overallTotal = computed(() => sortedList.value.length)
+
+const recordSummaryText = computed(() => (
+  filters.value.serverIp
+    ? `筛选后 ${total.value} / ${overallTotal.value} 条记录`
+    : `共 ${overallTotal.value} 条记录`
+))
 
 const paginatedList = computed(() => {
   const start = (currentPage.value - 1) * pageSize
-  return sortedList.value.slice(start, start + pageSize)
+  return filteredList.value.slice(start, start + pageSize)
 })
 
 function parseDateToTime(value) {
@@ -210,6 +294,37 @@ async function fetchAllInfo() {
   }
 }
 
+async function fetchServerIpOptions() {
+  configLoading.value = true
+  try {
+    const res = await listConfigs()
+    if (Array.isArray(res)) {
+      componentConfigs.value = res
+    } else if (res && Array.isArray(res.data)) {
+      componentConfigs.value = res.data
+    } else {
+      componentConfigs.value = []
+    }
+  } catch (error) {
+    componentConfigs.value = []
+    ElMessage.error(error?.message || '获取服务器 IP 筛选项失败')
+  } finally {
+    configLoading.value = false
+  }
+}
+
+async function refreshPage() {
+  await Promise.allSettled([
+    fetchAllInfo(),
+    fetchServerIpOptions(),
+  ])
+}
+
+function resetFilters() {
+  filters.value.serverIp = ''
+  currentPage.value = 1
+}
+
 function goDashboard() {
   router.push('/dashboard')
 }
@@ -251,8 +366,55 @@ async function handleClearAll() {
   }
 }
 
+async function handleDeleteServerIp() {
+  const selectedServerIp = String(filters.value.serverIp || '').trim()
+  if (!selectedServerIp) {
+    return
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      `该操作将删除服务器 ${selectedServerIp} 的全部告警记录，是否继续？`,
+      '确认删除',
+      {
+        confirmButtonText: '确认',
+        cancelButtonText: '取消',
+        type: 'warning',
+        modalClass: 'keep-bright-overlay',
+      }
+    )
+  } catch {
+    return
+  }
+
+  deletingServerIp.value = true
+  try {
+    const deleted = await deleteInfoByServerIp(selectedServerIp)
+    ElMessage.success(`已删除 ${selectedServerIp} 的 ${deleted || 0} 条告警记录`)
+    await fetchAllInfo()
+  } catch (error) {
+    console.error('Failed to delete info by server ip', error)
+    ElMessage.error(error?.message || '按服务器 IP 删除告警失败')
+  } finally {
+    deletingServerIp.value = false
+  }
+}
+
+watch(
+  () => filters.value.serverIp,
+  () => {
+    currentPage.value = 1
+  }
+)
+
+watch(serverIpOptions, options => {
+  if (filters.value.serverIp && !options.includes(filters.value.serverIp)) {
+    filters.value.serverIp = ''
+  }
+})
+
 onMounted(() => {
-  fetchAllInfo()
+  refreshPage()
 })
 </script>
 
@@ -278,4 +440,3 @@ onMounted(() => {
   overflow: hidden;
 }
 </style>
-

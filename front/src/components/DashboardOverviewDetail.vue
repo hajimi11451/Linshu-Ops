@@ -51,10 +51,30 @@
           </div>
 
           <div class="glass-subcard flex-1 min-h-0 overflow-hidden p-2.5 lg:p-3">
-            <div class="relative h-full min-h-[280px] w-full lg:min-h-[300px]">
-              <canvas v-if="hasChartData" ref="monitorChartRef" class="h-full w-full"></canvas>
-              <div v-else class="flex h-full items-center justify-center text-sm text-ui-subtext">
-                {{ loadingMonitor ? '加载监控数据...' : emptyChartLabel }}
+            <div class="flex h-full min-h-[280px] flex-col gap-3 lg:min-h-[300px]">
+              <div class="relative min-h-0 flex-1 w-full">
+                <canvas v-if="hasChartData" ref="monitorChartRef" class="h-full w-full"></canvas>
+                <div v-else class="flex h-full items-center justify-center text-sm text-ui-subtext">
+                  {{ loadingMonitor ? '加载监控数据...' : emptyChartLabel }}
+                </div>
+              </div>
+
+              <div
+                v-if="showTrendSlider"
+                class="rounded-[18px] border border-white/18 bg-white/8 px-3 py-2.5"
+              >
+                <div class="mb-2 flex items-center justify-between gap-3 text-xs text-ui-subtext">
+                  <span>窗口 {{ trendWindowRangeLabel }}</span>
+                  <span>共 {{ props.historyData.length }} 个点，每次展示 {{ trendWindowSize }} 个点</span>
+                </div>
+                <input
+                  v-model="trendWindowStart"
+                  class="trend-slider w-full"
+                  type="range"
+                  min="0"
+                  :max="maxTrendWindowStart"
+                  step="1"
+                />
               </div>
             </div>
           </div>
@@ -173,6 +193,8 @@ const props = defineProps({
 
 const monitorChartRef = ref(null)
 let monitorChartInstance = null
+const trendWindowSize = 240
+const trendWindowStart = ref(0)
 
 const monitorSettings = computed(() => normalizeMonitorSettings(props.currentInfo?.monitorSettings))
 
@@ -351,17 +373,32 @@ const datasetBlueprints = computed(() => {
   return blueprints
 })
 
+const maxTrendWindowStart = computed(() => Math.max(props.historyData.length - trendWindowSize, 0))
+
+const visibleHistoryData = computed(() => {
+  const safeStart = Math.max(0, Math.min(Number(trendWindowStart.value) || 0, maxTrendWindowStart.value))
+  return props.historyData.slice(safeStart, safeStart + trendWindowSize)
+})
+
+const showTrendSlider = computed(() => props.historyData.length > trendWindowSize)
+
+const trendWindowRangeLabel = computed(() => {
+  const start = Math.max(0, Math.min(Number(trendWindowStart.value) || 0, maxTrendWindowStart.value))
+  const end = Math.min(start + trendWindowSize, props.historyData.length)
+  return `${start + 1}-${end}`
+})
+
 const chartDatasets = computed(() => datasetBlueprints.value
   .map(blueprint => ({
     ...blueprint,
-    data: props.historyData.map(item => {
+    data: visibleHistoryData.value.map(item => {
       const parsed = Number(item?.[blueprint.key])
       return Number.isFinite(parsed) ? Number(parsed.toFixed(1)) : null
     }),
   }))
   .filter(dataset => dataset.data.some(value => value !== null)))
 
-const hasChartData = computed(() => props.historyData.length > 0 && chartDatasets.value.length > 0)
+const hasChartData = computed(() => visibleHistoryData.value.length > 0 && chartDatasets.value.length > 0)
 
 const emptyChartLabel = computed(() => {
   if (!enabledMetricLabels.value.length) return '当前未启用任何可绘制的监控项'
@@ -534,7 +571,7 @@ const renderMonitorChart = async () => {
     return
   }
 
-  const labels = props.historyData.map(item => item.time)
+  const labels = visibleHistoryData.value.map(item => item.time)
   const config = buildMonitorChartConfig(labels)
 
   if (monitorChartInstance) {
@@ -553,8 +590,34 @@ const handleResize = () => {
   }
 }
 
+watch(
+  () => props.historyData.length,
+  (nextLength, previousLength) => {
+    const previousMax = Math.max(previousLength - trendWindowSize, 0)
+    const nextMax = Math.max(nextLength - trendWindowSize, 0)
+    const currentStart = Number(trendWindowStart.value) || 0
+    const pinnedToLatest = currentStart >= previousMax
+
+    if (pinnedToLatest) {
+      trendWindowStart.value = nextMax
+      return
+    }
+
+    trendWindowStart.value = Math.max(0, Math.min(currentStart, nextMax))
+  },
+  { immediate: true }
+)
+
+watch(trendWindowStart, value => {
+  const safeValue = Math.max(0, Math.min(Number(value) || 0, maxTrendWindowStart.value))
+  if (safeValue !== value) {
+    trendWindowStart.value = safeValue
+  }
+})
+
 watch(() => props.historyData, renderMonitorChart, { deep: true })
 watch(monitorSettings, renderMonitorChart, { deep: true })
+watch(visibleHistoryData, renderMonitorChart, { deep: true })
 
 onMounted(() => {
   renderMonitorChart()
@@ -580,4 +643,34 @@ onBeforeUnmount(() => {
   background-color: #cbd5e0;
   border-radius: 3px;
 }
+
+.trend-slider {
+  appearance: none;
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(37, 99, 235, 0.2), rgba(37, 99, 235, 0.65));
+  outline: none;
+}
+
+.trend-slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  border-radius: 999px;
+  background: #2563eb;
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.28);
+  cursor: ew-resize;
+}
+
+.trend-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  border-radius: 999px;
+  background: #2563eb;
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.28);
+  cursor: ew-resize;
+}
 </style>
+

@@ -201,8 +201,8 @@ body {
   border: 1px solid var(--glass-border-soft);
   background: var(--glass-surface-soft);
   box-shadow: var(--glass-shadow-soft);
-  -webkit-backdrop-filter: blur(18px);
-  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur));
 }
 
 .glass-icon-badge {
@@ -213,8 +213,8 @@ body {
   border: 1px solid var(--glass-border-soft);
   background: var(--glass-surface-soft);
   box-shadow: var(--glass-shadow-soft);
-  -webkit-backdrop-filter: blur(18px);
-  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur));
 }
 
 .glass-code-block {
@@ -272,15 +272,15 @@ body {
 
 .el-overlay-dialog,
 .el-overlay-message-box {
-  -webkit-backdrop-filter: blur(10px);
-  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur));
 }
 
 .keep-bright-overlay,
 .el-overlay.keep-bright-overlay {
   background: rgba(255, 255, 255, 0.02) !important;
-  -webkit-backdrop-filter: blur(14px) saturate(125%) !important;
-  backdrop-filter: blur(14px) saturate(125%) !important;
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(125%) !important;
+  backdrop-filter: blur(var(--glass-blur)) saturate(125%) !important;
 }
 
 .keep-bright-overlay .el-overlay-dialog,
@@ -288,8 +288,8 @@ body {
 .el-overlay.keep-bright-overlay .el-overlay-dialog,
 .el-overlay.keep-bright-overlay .el-overlay-message-box {
   background: transparent !important;
-  -webkit-backdrop-filter: blur(14px) saturate(125%) !important;
-  backdrop-filter: blur(14px) saturate(125%) !important;
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(125%) !important;
+  backdrop-filter: blur(var(--glass-blur)) saturate(125%) !important;
 }
 
 /* 优化 Element Plus 表格 */

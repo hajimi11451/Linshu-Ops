@@ -51,6 +51,7 @@ public class MonitorService {
     private static final String AVAILABLE_MEM_CMD = "free -h | awk '/Mem:/ {print $7}'";
     private static final String NET_COUNTER_CMD = "awk 'NR>2 {gsub(/:/,\"\",$1); iface=$1; if (iface != \"lo\" && iface !~ /^(docker|veth|br-|virbr|vmnet|zt|tailscale|tun|tap)/) {rx+=$2; tx+=$10}} END {printf \"%.0f %.0f\", rx+0, tx+0}' /proc/net/dev";
     private static final String DISK_COUNTER_CMD = "awk '$3 ~ /^(sd[a-z]+|vd[a-z]+|xvd[a-z]+|nvme[0-9]+n[0-9]+)$/ {read+=$6*512; write+=$10*512} END {printf \"%.0f %.0f\", read+0, write+0}' /proc/diskstats";
+    private static final int MAX_HISTORY_POINTS = 2160;
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
     @Autowired
@@ -207,7 +208,7 @@ public class MonitorService {
 
         historyMap.computeIfAbsent(serverIp, k -> new CopyOnWriteArrayList<>()).add(metric);
         List<MetricDTO> history = historyMap.get(serverIp);
-        if (history.size() > 60) {
+        if (history.size() > MAX_HISTORY_POINTS) {
             history.remove(0);
         }
 
@@ -827,3 +828,4 @@ public class MonitorService {
     private record HostAndPort(String host, int port) {
     }
 }
+

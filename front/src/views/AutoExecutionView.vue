@@ -43,12 +43,12 @@
       <div class="disposal-table-wrap overflow-hidden rounded-[30px]">
         <el-table
           :data="paginatedList"
-          style="width: 100%"
+          style="width: 100% "
           border
           stripe
           v-loading="loading"
         >
-          <el-table-column prop="processTime" label="时间" min-width="180">
+          <el-table-column prop="processTime" label="时间" min-width="180"  >
             <template #default="{ row }">
               {{ formatDate(row.processTime) }}
             </template>
@@ -295,6 +295,7 @@ onMounted(() => {
 
 .disposal-table-wrap {
   border-radius: 30px;
+  
 }
 
 .disposal-table-wrap :deep(.el-table) {

@@ -21,4 +21,6 @@ public interface InfoService {
     int deleteAllInfo(Map<String, String> request);
 
     int deleteInfo(Map<String, String> request);
+
+    int deleteInfoByServerIp(Map<String, String> request);
 }

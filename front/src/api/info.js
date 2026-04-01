@@ -89,3 +89,14 @@ export function deleteInfo(id, username) {
     }
   })
 }
+
+export function deleteInfoByServerIp(serverIp, username) {
+  return request({
+    url: '/info/deleteInfoByServerIp',
+    method: 'post',
+    data: {
+      serverIp: String(serverIp || ''),
+      username: username || getCurrentUsername()
+    }
+  })
+}

@@ -233,6 +233,24 @@ public class InfoServiceImpl implements InfoService {
         return informationMapper.delete(queryWrapper);
     }
 
+    @Override
+    public int deleteInfoByServerIp(Map<String, String> request) {
+        Long userId = resolveUserId(request);
+        if (userId == null) {
+            return 0;
+        }
+
+        String serverIp = request.get("serverIp");
+        if (!StringUtils.hasText(serverIp)) {
+            return 0;
+        }
+
+        QueryWrapper<Information> queryWrapper = new QueryWrapper<>();
+        queryWrapper.eq("user_id", userId);
+        queryWrapper.eq("server_ip", serverIp.trim());
+        return informationMapper.delete(queryWrapper);
+    }
+
     private void normalizeInformationList(List<Information> response) {
         if (response == null || response.isEmpty()) {
             return;

@@ -50,18 +50,19 @@ public class AiUtils {
     @Value("${qianfan.v2.agent-read-timeout-seconds:30}")
     private int agentReadTimeoutSeconds;
 
-    private static final String RAG_FILE_PATH = "d:\\WorkSpace\\JavaWorkSpace\\aiOps\\backend\\src\\main\\resources\\info.md";
-
     private RestTemplate restTemplate;
     private RestTemplate agentRestTemplate;
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private Path resolvedRagFilePath;
 
     @PostConstruct
     public void initRestTemplate() {
         this.restTemplate = buildRestTemplate(readTimeoutSeconds);
         this.agentRestTemplate = buildRestTemplate(Math.min(readTimeoutSeconds, agentReadTimeoutSeconds));
+        this.resolvedRagFilePath = initializeRagFile();
         log.info("AI HTTP client initialized, readTimeoutSeconds={}, agentReadTimeoutSeconds={}",
                 readTimeoutSeconds, Math.min(readTimeoutSeconds, agentReadTimeoutSeconds));
+        log.info("AI RAG file initialized at {}", resolvedRagFilePath.toAbsolutePath());
     }
 
     public String analyzeLog(String logContent) {
@@ -114,11 +115,11 @@ public class AiUtils {
                 + "只允许返回一个 JSON 对象，字段固定且只能包含 intent,reason,confidence。"
                 + "其中 intent 只能是 execute、chat、ambiguous 三个值。"
                 + "判定规则："
-                + "1. 如果用户明确要求你去当前服务器检查、执行、修改、安装、重启、排查、处理,或者语气是明显让你执行某一操作时，返回 execute。"
-                + "2. 如果用户是在问原理、原因、区别、步骤、建议、命令写法、如何处理，通常返回 chat。"
-                + "3. 如果像“帮我看看”“查下”这类表述存在双重理解，就返回 ambiguous。"
-                + "4. 当前是否已经选了服务器连接只是背景信息，不能因为有连接就把普通提问判成 execute。"
-                + "5. reason 用一句中文短句说明判断依据，confidence 只能是 high、medium、low。"
+                + "1. 如果用户明确要求你去当前服务器检查、执行、修改、安装、重启、排查、处理等,或者语气是让你执行某一操作时，返回 execute。"
+                + "2. 如果用户是在问原理、原因、区别、步骤、建议、命令写法、等通常返回 chat。"
+                // + "3. 如果像“帮我看看”“查下”这类表述存在双重理解，就返回 ambiguous。"
+                + "3. 当前是否已经选了服务器连接只是背景信息，不能因为有连接就把普通提问判成 execute。"
+                + "4. reason 用一句中文短句说明判断依据，confidence 只能是 high、medium、low。"
                 + "输出示例：{\"intent\":\"chat\",\"reason\":\"用户在咨询处理思路，没有明确要求立即操作服务器。\",\"confidence\":\"high\"}";
 
         String userPrompt = "当前是否有完整服务器连接信息: " + (hasConnection ? "是" : "否")
@@ -228,11 +229,11 @@ public class AiUtils {
 
     private String readRagFile() {
         try {
-            Path path = Paths.get(RAG_FILE_PATH);
+            Path path = getRagFilePath();
             if (Files.exists(path)) {
                 return Files.readString(path);
             }
-            log.warn("RAG file does not exist: {}", RAG_FILE_PATH);
+            log.warn("RAG file does not exist: {}", path.toAbsolutePath());
             return "";
         } catch (IOException e) {
             log.error("Failed to read RAG file", e);
@@ -264,14 +265,73 @@ public class AiUtils {
 
     private void appendKnowledgeToRagFile(String content) {
         try {
-            Path path = Paths.get(RAG_FILE_PATH);
+            Path path = getRagFilePath();
             String finalContent = "\n\n### 自动归档知识 (" + LocalDate.now() + ")\n" + content;
             Files.createDirectories(path.getParent());
             Files.writeString(path, finalContent, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-            log.info("Knowledge appended to {}", RAG_FILE_PATH);
+            log.info("Knowledge appended to {}", path.toAbsolutePath());
         } catch (IOException e) {
             log.error("Failed to append knowledge", e);
         }
+    }
+
+    private Path initializeRagFile() {
+        Path path = resolveRagFilePath();
+        try {
+            Path parent = path.getParent();
+            if (parent != null) {
+                Files.createDirectories(parent);
+            }
+            if (!Files.exists(path) || Files.size(path) == 0L) {
+                Files.writeString(
+                        path,
+                        defaultRagContent(),
+                        StandardOpenOption.CREATE,
+                        StandardOpenOption.TRUNCATE_EXISTING
+                );
+            }
+        } catch (IOException e) {
+            log.error("Failed to initialize RAG file: {}", path.toAbsolutePath(), e);
+        }
+        return path;
+    }
+
+    private Path getRagFilePath() {
+        return resolvedRagFilePath == null ? resolveRagFilePath() : resolvedRagFilePath;
+    }
+
+    private Path resolveRagFilePath() {
+        List<Path> candidates = List.of(
+                Paths.get("src", "main", "resources", "info.md"),
+                Paths.get("backend", "src", "main", "resources", "info.md")
+        );
+
+        for (Path candidate : candidates) {
+            Path normalized = candidate.toAbsolutePath().normalize();
+            if (Files.exists(normalized)) {
+                return normalized;
+            }
+        }
+
+        Path backendResourcesDir = Paths.get("src", "main", "resources");
+        if (Files.exists(backendResourcesDir)) {
+            return backendResourcesDir.resolve("info.md").toAbsolutePath().normalize();
+        }
+        return Paths.get("backend", "src", "main", "resources", "info.md").toAbsolutePath().normalize();
+    }
+
+    private String defaultRagContent() {
+        return """
+                # 运维日志分析知识库
+
+                ## 风险分级补充规则
+                - SSH/sshd 日志中如果仅出现 Failed password、Invalid user、authentication failure、Connection closed、断连、重试等暴力破解尝试迹象，但没有成功登录、提权成功、后门落地、关键文件被篡改等“已攻破”证据时，最高判定为“中”风险。
+                - 只有明确出现登录成功（如 Accepted password、Accepted publickey、session opened）、提权成功、持久化、后门落地、敏感配置或数据被改动等“已攻破”证据时，才判定为“高”风险。
+
+                ## 编写建议
+                - 后续新增规则可以继续直接写在这个文件里，优先写清楚“场景、判断依据、风险等级、建议动作”。
+                - 这个文件会在每次日志分析时重新读取，修改后无需改 Java 代码。
+                """;
     }
 
     private Map<String, Object> parseCommandPlan(String response) {

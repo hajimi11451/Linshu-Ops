@@ -98,4 +98,14 @@ public class InfoConttroller {
         return ResponseEntity.ok(response);
     }
 
+    @PostMapping("/deleteInfoByServerIp")
+    public ResponseEntity<?> deleteInfoByServerIp(@RequestBody Map<String, String> request) {
+        int deleted = infoService.deleteInfoByServerIp(request);
+        Map<String, Object> response = new HashMap<>();
+        response.put("code", 200);
+        response.put("msg", deleted > 0 ? "删除成功" : "未找到该服务器的告警");
+        response.put("data", deleted);
+        return ResponseEntity.ok(response);
+    }
+
 }

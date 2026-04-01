@@ -16,13 +16,13 @@
       </div>
     </div>
 
-    <el-alert
+    <!-- <el-alert
       class="mt-6"
       title="同一问题连续两次高风险才会发信，冷却 30 分钟。"
       type="info"
       :closable="false"
       show-icon
-    />
+    /> -->
 
     <div class="notification-body-grid mt-6 min-h-0 flex-1">
       <section class="notification-form-panel glass-subcard h-full min-h-0 rounded-[30px] p-6">
@@ -78,6 +78,16 @@
             </div>
           </el-form-item>
         </el-form>
+        
+        <div style="margin: 20px 0 0 10px">
+        <p class="text-xl">注意：</p>
+        <div style="margin-left:10px " class="mt-3 text-base text-ui-subtext">
+        <p>同一问题连续两次高风险才会发送邮件，冷却 30 分钟。</p>
+        <p>用户收到信息后请尽快检查服务器，本项目不能完美解决高风险问题</p>
+        <p>如遇到难解决的问题，联系管理员解决</p>
+        <p></p>
+        </div>
+        </div>
       </section>
 
       <section class="status-panel glass-subcard h-full min-h-0 rounded-[30px] p-5">
@@ -312,6 +322,7 @@ onMounted(() => {
 
 .status-plain-descriptions :deep(.el-descriptions__body) {
   background: transparent;
+  padding: 10px 10px 10px 20px;
 }
 
 .status-plain-descriptions :deep(.el-descriptions__table) {

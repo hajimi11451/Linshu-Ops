@@ -57,7 +57,7 @@
             </template>
             <el-input
               v-model="config.serverIp"
-              placeholder="192.168.1.10"
+              placeholder="输入服务器ip"
               clearable
             />
           </el-form-item>
@@ -68,7 +68,7 @@
           >
             <el-input
               v-model="config.username"
-              placeholder="root"
+              placeholder="请输入用户名"
               clearable
             />
           </el-form-item>
@@ -117,7 +117,7 @@
           <el-form-item class="mb-0" label="日志路径">
             <template #label>
               <label class="block text-sm font-medium text-ui-subtext mb-1 flex justify-between items-center">
-                <span>日志路径 <span class="text-xs text-ui-subtext font-normal ml-2">(可选)</span></span>
+                <span>日志路径 <span class="text-xs text-ui-subtext font-normal ml-2">(若为空则由ai自动识别)</span></span>
                 <span
                   v-if="config.logPath"
                   :class="isVerified ? 'text-ui-success' : 'text-ui-warning'"
@@ -125,7 +125,7 @@
                 >
                   {{ isVerified ? '已验证' : '识别中' }}
                 </span>
-                <span v-else class="text-xs text-brand">自动探测</span>
+                
               </label>
             </template>
             <div class="relative w-full">

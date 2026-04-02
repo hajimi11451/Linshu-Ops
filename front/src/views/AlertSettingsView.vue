@@ -12,17 +12,10 @@
         <el-tag :type="contactStatusType" effect="light">
           {{ contactStatusText }}
         </el-tag>
-        <el-tag type="danger" effect="plain">红色告警邮件</el-tag>
       </div>
     </div>
 
-    <!-- <el-alert
-      class="mt-6"
-      title="同一问题连续两次高风险才会发信，冷却 30 分钟。"
-      type="info"
-      :closable="false"
-      show-icon
-    /> -->
+    
 
     <div class="notification-body-grid mt-6 min-h-0 flex-1">
       <section class="notification-form-panel glass-subcard h-full min-h-0 rounded-[30px] p-6">

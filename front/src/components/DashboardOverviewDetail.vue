@@ -66,7 +66,7 @@
                 
                 <div class="mb-2 flex items-center justify-between text-xs text-ui-subtext">
                   <span>时间范围</span>
-                  <span>{{ trendWindowRangeLabel }} / {{ props.historyData.length }}</span>
+                  <span>{{ currentWindowTimeRange }} / 监控保留时长:{{ totalHistoryDuration }}</span>
                 </div>
                 <input
                   v-model="trendWindowStart"
@@ -192,25 +192,31 @@ const props = defineProps({
   },
 })
 
-const totalHistoryDuration = computed(() => {
-  if (props.historyData.length < 2) {
+const formatDurationFromSamples = sampleCount => {
+  if (sampleCount <= 0) {
     return 'N/A'
   }
-  const firstTime = new Date(props.historyData[0].time)
-  const lastTime = new Date(props.historyData[props.historyData.length - 1].time)
-  const diffMs = lastTime.getTime() - firstTime.getTime()
 
-  // Convert milliseconds to a human-readable format
-  const seconds = Math.floor(diffMs / 1000)
-  const minutes = Math.floor(seconds / 60)
-  const hours = Math.floor(minutes / 60)
-  const days = Math.floor(hours / 24)
+  const sampleIntervalSeconds = 30
+  const totalSeconds = Math.max(sampleCount - 1, 0) * sampleIntervalSeconds
+  const days = Math.floor(totalSeconds / 86400)
+  const hours = Math.floor((totalSeconds % 86400) / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
 
-  if (days > 0) return `${days} 天`
-  if (hours > 0) return `${hours} 小时`
-  if (minutes > 0) return `${minutes} 分钟`
+  if (days > 0) return `${days} 天 ${hours} 小时`
+  if (hours > 0) return `${hours} 小时 ${minutes} 分钟`
+  if (minutes > 0) return `${minutes} 分钟 ${seconds} 秒`
   return `${seconds} 秒`
-})
+}
+
+const formatTrendTimeLabel = value => {
+  const text = String(value || '').trim()
+  const matched = text.match(/(\d{1,2}:\d{2})(?::\d{2})?/)
+  return matched ? matched[1] : (text || 'N/A')
+}
+
+const totalHistoryDuration = computed(() => formatDurationFromSamples(props.historyData.length))
 
 const monitorChartRef = ref(null)
 let monitorChartInstance = null
@@ -403,19 +409,16 @@ const visibleHistoryData = computed(() => {
 
 const showTrendSlider = computed(() => props.historyData.length > trendWindowSize)
 
-const trendWindowRangeLabel = computed(() => {
-  const startIdx = Math.max(0, Math.min(Number(trendWindowStart.value) || 0, maxTrendWindowStart.value))
-  const endIdx = Math.min(startIdx + trendWindowSize, props.historyData.length)
-
-  if (visibleHistoryData.value.length === 0) {
+const currentWindowTimeRange = computed(() => {
+  if (!visibleHistoryData.value.length) {
     return 'N/A'
   }
 
-  const startTime = visibleHistoryData.value[0]?.time || 'N/A'
-  const endTime = visibleHistoryData.value[visibleHistoryData.value.length - 1]?.time || 'N/A'
-
+  const startTime = formatTrendTimeLabel(visibleHistoryData.value[0]?.time)
+  const endTime = formatTrendTimeLabel(visibleHistoryData.value[visibleHistoryData.value.length - 1]?.time)
   return `${startTime} - ${endTime}`
 })
+
 
 const chartDatasets = computed(() => datasetBlueprints.value
   .map(blueprint => ({
@@ -716,4 +719,10 @@ onBeforeUnmount(() => {
   cursor: ew-resize;
 }
 </style>
+
+
+
+
+
+
 

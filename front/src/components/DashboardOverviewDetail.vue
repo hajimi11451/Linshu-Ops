@@ -192,6 +192,26 @@ const props = defineProps({
   },
 })
 
+const totalHistoryDuration = computed(() => {
+  if (props.historyData.length < 2) {
+    return 'N/A'
+  }
+  const firstTime = new Date(props.historyData[0].time)
+  const lastTime = new Date(props.historyData[props.historyData.length - 1].time)
+  const diffMs = lastTime.getTime() - firstTime.getTime()
+
+  // Convert milliseconds to a human-readable format
+  const seconds = Math.floor(diffMs / 1000)
+  const minutes = Math.floor(seconds / 60)
+  const hours = Math.floor(minutes / 60)
+  const days = Math.floor(hours / 24)
+
+  if (days > 0) return `${days} 天`
+  if (hours > 0) return `${hours} 小时`
+  if (minutes > 0) return `${minutes} 分钟`
+  return `${seconds} 秒`
+})
+
 const monitorChartRef = ref(null)
 let monitorChartInstance = null
 const trendWindowSize = 240

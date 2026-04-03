@@ -100,7 +100,7 @@
                         </div>
                         <h4 class="mt-6 text-2xl font-bold text-ui-text">新增服务器</h4>
                         <p class="mt-3 max-w-[260px] text-sm leading-6 text-ui-subtext">
-                          可按需采集 CPU、内存、网卡收发与磁盘读写速率。
+                          接入后默认开始采集服务器监控数据。
                         </p>
                         <div class="mt-6 inline-flex items-center rounded-full bg-brand px-4 py-2 text-sm font-semibold text-white shadow-sm">
                           添加
@@ -230,14 +230,19 @@
     <el-dialog
       v-model="addMonitorDialogVisible"
       title="新增服务器"
-      width="520px"
+      width="86vw"
+      class="add-server-dialog"
+      modal-class="keep-bright-overlay"
+      append-to-body
+      :close-on-click-modal="true"
+      :close-on-press-escape="true"
       destroy-on-close
     >
-      <div class="glass-subcard px-4 py-3 text-sm text-brand">
-        保存后按勾选项开始采集，默认六项全部开启。
-      </div>
+      <div class="add-server-dialog__body flex h-full min-h-0 flex-col">
+        
+        
 
-      <el-form class="mt-5" label-position="top">
+        <el-form class="mt-5 flex-1 overflow-y-auto pr-1 custom-scrollbar" label-position="top">
         <el-form-item label="服务器 IP">
           <el-input v-model="addMonitorForm.serverIp" placeholder="192.168.1.10 或 192.168.1.10:22" clearable />
         </el-form-item>
@@ -252,17 +257,16 @@
           </el-form-item>
         </div>
 
-        <el-form-item label="采集项">
-          <div class="glass-subcard grid w-full gap-3 px-4 py-4 sm:grid-cols-2">
-            <el-checkbox v-model="addMonitorForm.cpuEnabled">CPU 使用率</el-checkbox>
-            <el-checkbox v-model="addMonitorForm.memEnabled">内存使用率</el-checkbox>
-            <el-checkbox v-model="addMonitorForm.netRxEnabled">网卡接收速率</el-checkbox>
-            <el-checkbox v-model="addMonitorForm.netTxEnabled">网卡发送速率</el-checkbox>
-            <el-checkbox v-model="addMonitorForm.diskReadEnabled">磁盘读取速率</el-checkbox>
-            <el-checkbox v-model="addMonitorForm.diskWriteEnabled">磁盘写入速率</el-checkbox>
-          </div>
-        </el-form-item>
-      </el-form>
+        <div class="glass-subcard px-4 py-3  ">
+        <p class="text-base">注意</p>
+        <div style="margin-left:10px " class="mt-3 text-sm text-ui-subtext">
+        <p>采集内容包括:系统型号、运行时间、节点、内存、网卡IO、磁盘IO;</p>
+        <p>如需检测其他组件，可以在诊断-新增列表中添加</p>
+        </div>
+        </div>
+        
+        </el-form>
+      </div>
 
       <template #footer>
         <div class="flex justify-end gap-3">
@@ -921,14 +925,9 @@ const submitAddServerMonitor = async () => {
       serverIp,
       username,
       password,
-      cpuEnabled: addMonitorForm.cpuEnabled,
-      memEnabled: addMonitorForm.memEnabled,
-      netRxEnabled: addMonitorForm.netRxEnabled,
-      netTxEnabled: addMonitorForm.netTxEnabled,
-      diskReadEnabled: addMonitorForm.diskReadEnabled,
-      diskWriteEnabled: addMonitorForm.diskWriteEnabled,
+      ...defaultMonitorSettings(),
     })
-    ElMessage.success('服务器监控已添加，开始按配置采集系统指标')
+    ElMessage.success('服务器监控已添加，默认开启全量采集')
     addMonitorDialogVisible.value = false
     resetAddMonitorForm()
 
@@ -1325,9 +1324,76 @@ onUnmounted(() => {
   border-radius: 3px;
 }
 
+:deep(.add-server-dialog) {
+  width: min(1380px, calc(100vw - 96px)) !important;
+  max-width: calc(100vw - 96px) !important;
+  height: 60vh;
+  max-height: 60vh;
+  margin: 20vh auto 0 !important;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.44) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(135%);
+  backdrop-filter: blur(28px) saturate(135%);
+}
+
+:deep(.add-server-dialog .el-dialog__header) {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.34);
+  padding: 22px 28px 18px;
+}
+
+:deep(.add-server-dialog .el-dialog__title) {
+  color: #0f172a;
+  font-weight: 700;
+  font-size: 1.125rem;
+}
+
+:deep(.add-server-dialog .el-dialog__headerbtn) {
+  top: 14px;
+  right: 16px;
+}
+
+:deep(.add-server-dialog .el-dialog__body) {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  padding: 24px 28px;
+  background: transparent;
+}
+
+:deep(.add-server-dialog .el-dialog__footer) {
+  border-top: 1px solid rgba(255, 255, 255, 0.34);
+  padding: 18px 28px 22px;
+  background: transparent;
+}
+
+.add-server-dialog__body {
+  min-height: 0;
+}
+
 @media (max-width: 768px) {
   .server-health-stage {
     min-height: 154px;
+  }
+
+  :deep(.add-server-dialog) {
+    width: calc(100vw - 24px) !important;
+    max-width: calc(100vw - 24px) !important;
+    max-height: calc(100vh - 24px);
+    margin: 12px auto 0 !important;
+  }
+
+  :deep(.add-server-dialog .el-dialog__header) {
+    padding: 18px 20px 14px;
+  }
+
+  :deep(.add-server-dialog .el-dialog__body) {
+    padding: 18px 20px;
+  }
+
+  :deep(.add-server-dialog .el-dialog__footer) {
+    padding: 14px 20px 18px;
   }
 }
 </style>

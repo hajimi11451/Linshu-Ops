@@ -38,16 +38,16 @@ public class AiUtils {
     @Value("${qianfan.v2.token}")
     private String token;
 
-    @Value("${qianfan.v2.audit-model-name:glm-4.7}")
+    @Value("${qianfan.v2.audit-model-name}")
     private String auditModelName;
 
-    @Value("${qianfan.v2.chat-model-name:glm-4.7}")
+    @Value("${qianfan.v2.chat-model-name}")
     private String chatModelName;
 
-    @Value("${qianfan.v2.read-timeout-seconds:40}")
+    @Value("${qianfan.v2.read-timeout-seconds}")
     private int readTimeoutSeconds;
 
-    @Value("${qianfan.v2.agent-read-timeout-seconds:30}")
+    @Value("${qianfan.v2.agent-read-timeout-seconds}")
     private int agentReadTimeoutSeconds;
 
     private RestTemplate restTemplate;
@@ -211,7 +211,7 @@ public class AiUtils {
                 + "其中 hasCommand 和 needConfirm 必须是布尔值；riskLevel 只能是 low/medium/high。"
                 + "如果无需执行命令，hasCommand=false 且 command 为空字符串。";
 
-        String response = callQianfanApi(systemPrompt, userQuery, "glm-4.7");
+        String response = callQianfanApi(systemPrompt, userQuery, chatModelName);
         return parseCommandPlan(response);
     }
 

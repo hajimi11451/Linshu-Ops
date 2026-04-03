@@ -32,10 +32,10 @@ public class LlmClient {
     @Value("${qianfan.v2.token}")
     private String token;
 
-    @Value("${qianfan.v2.chat-model-name:glm-4.7}")
+    @Value("${qianfan.v2.chat-model-name}")
     private String chatModelName;
 
-    @Value("${qianfan.v2.agent-read-timeout-seconds:30}")
+    @Value("${qianfan.v2.agent-read-timeout-seconds}")
     private int agentReadTimeoutSeconds;
 
     private RestClient restClient;

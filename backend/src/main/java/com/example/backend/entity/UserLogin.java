@@ -8,7 +8,7 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 @Data
-@TableName("userLogin")
+@TableName("userlogin")
 public class UserLogin {
     @TableId(type = IdType.AUTO)
     //主键ID

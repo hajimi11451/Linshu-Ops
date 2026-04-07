@@ -9,7 +9,7 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 @Data
-@TableName("componentConfig")
+@TableName("componentconfig")
 public class ComponentConfig {
     @TableId(type = IdType.AUTO)
     private Long id;

@@ -26,6 +26,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.FutureTask;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -44,6 +45,12 @@ public class ServerWebSocketHandler extends TextWebSocketHandler {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final ExecutorService agentExecutor = Executors.newCachedThreadPool();
+    private final java.util.concurrent.ScheduledExecutorService heartbeatScheduler =
+            Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "ws-heartbeat");
+                t.setDaemon(true);
+                return t;
+            });
 
     @Autowired
     private AiUtils aiUtils;
@@ -258,7 +265,10 @@ public class ServerWebSocketHandler extends TextWebSocketHandler {
         result.put("executed", false);
         result.put("chartSuggest", false);
 
+        ScheduledFuture<?> heartbeat = null;
         try {
+            heartbeat = startWsHeartbeat(session, start, "AI 正在生成回复，请稍等…");
+
             String answer = aiUtils.chatWithOpsAssistant(query, extraInstruction);
             result.put("reply", answer);
             result.put("execResult", execResultMessage);
@@ -266,6 +276,10 @@ public class ServerWebSocketHandler extends TextWebSocketHandler {
             log.error("ops_chat chat-only failed, sessionId={}", session.getId(), e);
             result.put("reply", "当前问题处理失败，请稍后重试。");
             result.put("execResult", e.getMessage());
+        } finally {
+            if (heartbeat != null) {
+                heartbeat.cancel(true);
+            }
         }
 
         sendJson(session, result);
@@ -291,7 +305,9 @@ public class ServerWebSocketHandler extends TextWebSocketHandler {
             TaskState history = AGENT_HISTORY.get(session.getId());
             if (history != null) {
                 log.info("Resuming agent loop from history, sessionId={}", session.getId());
+                ScheduledFuture<?> heartbeat = null;
                 try {
+                    heartbeat = startWsHeartbeat(session, start, "任务继续执行中，请稍等…");
                     OpsAgentService.AgentRunResult agentResult = opsAgentService.runAgentLoopWithAdvice(
                             "[继续执行]", serverIp, username, password, maxRounds, null, session, history
                     );
@@ -341,6 +357,10 @@ public class ServerWebSocketHandler extends TextWebSocketHandler {
                     result.put("reply", "恢复执行失败: " + e.getMessage());
                     result.put("execResult", e.getMessage());
                     result.put("chartSuggest", false);
+                } finally {
+                    if (heartbeat != null) {
+                        heartbeat.cancel(true);
+                    }
                 }
                 sendJson(session, result);
                 sendProgress(session, "finished", "流程结束", System.currentTimeMillis() - start);
@@ -358,8 +378,10 @@ public class ServerWebSocketHandler extends TextWebSocketHandler {
             return;
         }
 
+        ScheduledFuture<?> heartbeat = null;
         try {
             AGENT_HISTORY.remove(session.getId());
+            heartbeat = startWsHeartbeat(session, start, "任务执行中，请稍等…");
             OpsAgentService.AgentRunResult agentResult = opsAgentService.runAgentLoopWithAdvice(query, serverIp, username, password, maxRounds, null, session);
             if (agentResult.isStopped()) {
                 result.put("executed", false);
@@ -407,6 +429,10 @@ public class ServerWebSocketHandler extends TextWebSocketHandler {
             result.put("reply", "Agent 执行失败");
             result.put("execResult", e.getMessage());
             result.put("chartSuggest", false);
+        } finally {
+            if (heartbeat != null) {
+                heartbeat.cancel(true);
+            }
         }
 
         sendJson(session, result);
@@ -485,6 +511,17 @@ public class ServerWebSocketHandler extends TextWebSocketHandler {
             return "判断为咨询问题，未执行服务器操作。";
         }
         return "当前没有服务器连接，已按纯问答处理。";
+    }
+
+    private ScheduledFuture<?> startWsHeartbeat(WebSocketSession session, long startMs, String message) {
+        return heartbeatScheduler.scheduleAtFixedRate(() -> {
+            if (session == null || !session.isOpen()) {
+                return;
+            }
+            sendProgress(session, "ai_waiting",
+                    StringUtils.hasText(message) ? message : "处理中，请稍等…",
+                    System.currentTimeMillis() - startMs);
+        }, 8, 8, TimeUnit.SECONDS);
     }
 
     private void handleOpsForceStop(WebSocketSession session, JsonNode node) {
@@ -1024,7 +1061,7 @@ public class ServerWebSocketHandler extends TextWebSocketHandler {
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) throws Exception {
-        log.info("WebSocket closed: {}", session.getId());
+        log.info("WebSocket closed: {}, status={}", session.getId(), status);
         SESSIONS.remove(session.getId());
         AGENT_HISTORY.remove(session.getId());
         SESSION_LAST_ACCESS.remove(session.getId());

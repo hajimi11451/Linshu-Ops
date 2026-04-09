@@ -126,6 +126,7 @@ public class AiUtils {
         String systemPrompt = "你是运维请求分流助手。请判断用户这次输入更像是咨询提问，还是希望你直接在服务器上执行/检查/处理。"
                 + "只允许返回一个 JSON 对象，字段固定且只能包含 intent,reason,confidence。"
                 + "其中 intent 只能是 execute、chat、ambiguous 三个值。"
+                + "不要输出 Markdown，不要使用 ``` 包裹 JSON。"
                 + "判定规则："
                 + "1. 如果用户明确要求你去当前服务器检查、执行、修改、安装、重启、排查、处理等,或者语气是让你执行某一操作时，返回 execute。"
                 + "2. 如果用户是在问原理、原因、区别、步骤、建议、命令写法、等通常返回 chat。"
@@ -139,7 +140,7 @@ public class AiUtils {
 
         try {
             String response = callQianfanApi(systemPrompt, userPrompt, chatModelName);
-            JsonNode root = objectMapper.readTree(response.trim());
+            JsonNode root = objectMapper.readTree(extractLikelyJsonObject(response));
             if (root.isObject()) {
                 String intent = normalizeIntent(root.path("intent").asText(""));
                 if (StringUtils.hasText(intent)) {
@@ -403,9 +404,9 @@ public class AiUtils {
                 "帮我看看", "帮我看下", "帮我看一下", "看看", "看下", "查下", "查一下", "分析一下");
         boolean operatorVerbStart = normalized.matches("^(检查|查看|排查|重启|重载|安装|卸载|启动|停止|修复|处理|清理|执行|部署|更新|回滚|拉取|诊断|登录).*");
         boolean targetServer = containsAny(normalized,
-                "我的服务器", "服务器上", "服务器上的", "当前服务器", "这台服务器", "这台机器", "机器上", "主机上");
+                "我的服务器", "服务器上", "服务器上的", "在服务器", "当前服务器", "这台服务器", "这台机器", "机器上", "主机上");
         boolean operatorVerb = containsAny(normalized,
-                "检查", "查看", "排查", "分析", "诊断", "确认", "检索", "查询", "看看", "查下", "查一下");
+                "检查", "查看", "排查", "分析", "诊断", "确认", "检索", "查询", "处理", "封禁", "拉黑", "看看", "查下", "查一下");
 
         if (targetServer && operatorVerb) {
             result.put("intent", "execute");
@@ -491,6 +492,32 @@ public class AiUtils {
             return "";
         }
         return reason.replaceAll("\\s+", " ").trim();
+    }
+
+    private String extractLikelyJsonObject(String raw) {
+        String text = raw == null ? "" : raw.trim();
+        if (!StringUtils.hasText(text)) {
+            return "{}";
+        }
+
+        // Strip common fenced-code wrappers like ```json ... ```
+        if (text.startsWith("```")) {
+            int firstNewline = text.indexOf('\n');
+            if (firstNewline >= 0 && firstNewline + 1 < text.length()) {
+                text = text.substring(firstNewline + 1).trim();
+            }
+            int lastFence = text.lastIndexOf("```");
+            if (lastFence >= 0) {
+                text = text.substring(0, lastFence).trim();
+            }
+        }
+
+        int start = text.indexOf('{');
+        int end = text.lastIndexOf('}');
+        if (start >= 0 && end > start) {
+            return text.substring(start, end + 1).trim();
+        }
+        return text;
     }
 
     private List<Map<String, String>> parsePlanSteps(JsonNode planStepsNode) {

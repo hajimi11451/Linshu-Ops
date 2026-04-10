@@ -595,10 +595,32 @@ const disconnectWs = () => {
   }
 }
 
+const HIGH_RISK_KEYWORDS = [
+  'rm -rf /', 'rm -rf /*', 'rm -rf ~', 'rm -rf /root', 'rm -rf /home',
+  'mkfs', 'mkfs.ext', 'mkfs.xfs', 'mkfs.ntfs',
+  'shutdown', 'shutdown -h', 'shutdown -r', 'poweroff', 'halt', 'reboot',
+  'dd if=/dev/zero', 'dd if=/dev/random', 'dd if=/dev/urandom',
+  'chmod -R 777 /', 'chmod 777 /',
+  'userdel -r root', 'userdel root',
+  '> /etc/passwd', '> /etc/shadow', '> /etc/hosts',
+  ':(){ :|:& };:', 'fork bomb'
+]
+
+const containsHighRiskCommand = (text) => {
+  const lowerText = text.toLowerCase()
+  return HIGH_RISK_KEYWORDS.some(keyword => lowerText.includes(keyword.toLowerCase()))
+}
+
 const sendMessage = async presetText => {
   if (isAgentRunning.value) return false
   const text = typeof presetText === 'string' ? presetText.trim() : input.value.trim()
   if (!text) return false
+
+  if (containsHighRiskCommand(text)) {
+    await appendMessage('assistant', '**安全拦截**：检测到输入包含高风险系统命令（如 rm -rf、shutdown、mkfs 等），该请求已被前端安全层拦截。如需执行服务器维护操作，请使用自然语言描述需求，由 AI 生成安全的处置方案。')
+    input.value = ''
+    return false
+  }
 
   if (!connected.value || !ws.value) {
     await appendMessage('assistant', '当前未连接，正在自动连接...')
